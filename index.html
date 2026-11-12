@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Órdenes de Trabajo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Plan: identidad Ruta de la Fruta. Azul marino y celeste del logo sobre blanco; cabecera con el logo en placa blanca,
+   tarjetas de OT con franja de estado a la izquierda, contadores arriba que también filtran. */
+:root{
+  --fondo:#f1f6f9; --panel:#ffffff; --tinta:#002d57; --tenue:#4f6478; --linea:#cfdde6;
+  --acento:#01add3; --boton:#002d57; --boton-tinta:#ffffff; --campo:#f6fafc;
+  --ok:#1f7a4d; --aviso:#a86400; --alerta:#b3261e; --info:#0b7fa0;
+  --display:"Albert Sans","Segoe UI",system-ui,sans-serif;
+  --cuerpo:"Albert Sans","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
+    --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
+    --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
+  --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
+  --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--fondo);color:var(--tinta);font:16px/1.45 var(--cuerpo)}
+main{max-width:860px;margin:0 auto;padding:20px 16px 64px;display:flex;flex-direction:column;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px;background:#ffffff;border:1px solid var(--linea);border-bottom:4px solid var(--acento);border-radius:6px;padding:10px 16px}
+header img{height:64px;width:auto;max-width:100%;display:block}
+.titulo{display:flex;flex-direction:column;align-items:flex-end;gap:2px;color:#002d57}
+h1{font:700 1.5rem/1.1 var(--display);margin:0;text-wrap:balance}
+h2{font:700 1.2rem/1.2 var(--display);margin:0}
+h3{font:600 1.05rem/1.25 var(--cuerpo);margin:0;overflow-wrap:anywhere}
+p{margin:0}
+.rol{font-weight:600;color:#0b7fa0}
+.panel{background:var(--panel);border:1px solid var(--linea);border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.nota{color:var(--tenue);font-size:.93rem}
+.mensaje{border-left:4px solid var(--alerta);background:var(--panel);padding:10px 12px;border-radius:4px}
+.mensaje.bien{border-color:var(--ok)}
+[hidden]{display:none!important}
+
+.filtros{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media (max-width:480px){.filtros{grid-template-columns:repeat(2,1fr)}}
+.filtro{background:var(--panel);border:1px solid var(--linea);border-radius:6px;padding:8px 10px;text-align:left;color:var(--tinta);font:inherit;cursor:pointer;display:flex;flex-direction:column}
+.filtro b{font:700 1.6rem/1.1 var(--display);color:var(--acento);font-variant-numeric:tabular-nums}
+.filtro span{font-size:.85rem;color:var(--tenue)}
+.filtro[aria-pressed="true"]{border-color:var(--acento);box-shadow:inset 0 -3px 0 var(--acento)}
+
+label{display:flex;flex-direction:column;gap:4px;font-weight:500;font-size:.92rem}
+input,select,textarea{font:inherit;color:var(--tinta);background:var(--campo);border:1px solid var(--linea);border-radius:4px;padding:9px 10px;width:100%}
+textarea{min-height:84px;resize:vertical}
+input[type=file]{padding:7px}
+:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+.fila{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.acciones{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button.btn{font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);background:transparent;color:var(--tinta);cursor:pointer}
+button.btn.principal{background:var(--boton);border-color:var(--boton);color:var(--boton-tinta)}
+button.btn.peligro{border-color:var(--alerta);color:var(--alerta)}
+button.btn:disabled{opacity:.55;cursor:default}
+
+.lista{display:flex;flex-direction:column;gap:10px}
+.ot{background:var(--panel);border:1px solid var(--linea);border-left:6px solid var(--tenue);border-radius:6px}
+.ot.e-asignada{border-left-color:var(--info)}
+.ot.e-devuelta{border-left-color:var(--alerta)}
+.ot.e-revision{border-left-color:var(--aviso)}
+.ot.e-cerrada{border-left-color:var(--ok)}
+.ot-cab{width:100%;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.ot-linea{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
+.num{font:700 1rem/1 var(--display);letter-spacing:.02em;color:var(--info);font-variant-numeric:tabular-nums}
+.pill{font-size:.8rem;font-weight:600;border:1px solid currentColor;border-radius:99px;padding:1px 9px;white-space:nowrap}
+.pill.e-asignada{color:var(--info)} .pill.e-devuelta{color:var(--alerta)}
+.pill.e-revision{color:var(--aviso)} .pill.e-cerrada{color:var(--ok)}
+.meta{color:var(--tenue);font-size:.88rem;display:flex;flex-wrap:wrap;gap:2px 14px}
+.meta .vencida{color:var(--alerta);font-weight:600}
+.ot-cuerpo{border-top:1px solid var(--linea);padding:14px;display:flex;flex-direction:column;gap:12px}
+.bloque{display:flex;flex-direction:column;gap:4px}
+.bloque .rot{font:700 .78rem var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--tenue)}
+.bloque p{white-space:pre-wrap;overflow-wrap:anywhere;max-width:65ch}
+.cod{font-weight:600;font-variant-numeric:tabular-nums}
+.foto{max-width:100%;max-height:420px;border-radius:4px;border:1px solid var(--linea);display:block}
+.devol{border-left:4px solid var(--alerta);padding:6px 10px;background:var(--campo)}
+.equipo-fila{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
+details summary{cursor:pointer;font:700 1.2rem var(--display)}
+details[open] summary{margin-bottom:10px}
+ol.pasos{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;max-width:65ch}
+@media (prefers-reduced-motion:no-preference){.filtro,button.btn{transition:border-color .15s,opacity .15s}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="Ruta de la Fruta" width="720" height="302">
+    <div class="titulo">
+      <h1>Órdenes de Trabajo</h1>
+      <span class="rol" id="rol">Cargando…</span>
+    </div>
+  </header>
+
+  <div class="mensaje" id="aviso" role="status" hidden></div>
+
+  <section class="filtros" id="filtros" hidden aria-label="Filtrar por estado"></section>
+
+  <section class="panel" id="nueva" hidden>
+    <h2>Nueva orden de trabajo</h2>
+    <form id="form-nueva" class="lista" autocomplete="off">
+      <div class="fila">
+        <label for="n-trab">Trabajador asignado
+          <select id="n-trab" required></select>
+        </label>
+        <label for="n-titulo">Título del trabajo
+          <input id="n-titulo" required maxlength="120" placeholder="Ej.: Cambio de rodamiento bomba 3">
+        </label>
+      </div>
+      <label for="n-detalle">Detalle del trabajo
+        <textarea id="n-detalle" required maxlength="4000" placeholder="Qué hay que hacer, materiales, medidas de seguridad…"></textarea>
+      </label>
+      <div class="fila">
+        <label for="n-lugar">Ubicación o equipo
+          <input id="n-lugar" maxlength="120" placeholder="Ej.: Planta 2, sala de bombas">
+        </label>
+        <label for="n-prio">Prioridad
+          <select id="n-prio"><option>Normal</option><option>Alta</option><option>Urgente</option></select>
+        </label>
+        <label for="n-fecha">Fecha límite
+          <input id="n-fecha" type="date">
+        </label>
+      </div>
+      <div class="acciones">
+        <button class="btn principal" id="n-enviar" type="submit">Asignar OT</button>
+        <span class="nota" id="n-estado"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel" id="sin-equipo" hidden>
+    <h2>Agrega a tus trabajadores</h2>
+    <ol class="pasos">
+      <li>Abre el menú Compartir de esta página y agrega a cada trabajador con nivel Colaborador (Contributor).</li>
+      <li>Envíales el enlace. Cada uno entra con su propia cuenta.</li>
+      <li>La primera vez que un trabajador abre la página queda registrado y aparece aquí para asignarle órdenes.</li>
+    </ol>
+  </section>
+
+  <section class="lista" id="lista" aria-live="polite"></section>
+
+  <section class="panel" id="equipo" hidden>
+    <details>
+      <summary id="equipo-titulo">Equipo</summary>
+      <p class="nota">Si un nombre no aparece, escribe uno para identificar al trabajador.</p>
+      <div class="lista" id="equipo-lista" style="margin-top:10px"></div>
+    </details>
+  </section>
+</main>
+
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+function h(tag, attrs, ...kids){
+  const e = document.createElement(tag);
+  for (const k in (attrs||{})){
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "value") e.value = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()){
+    if (c == null || c === false) continue;
+    e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+const S = {
+  db:null, user:null, assets:null, yo:null, admin:false,
+  workers:new Map(), ots:new Map(), reps:new Map(), subs:new Map(),
+  nombres:{}, filtro:"todas", abiertos:{}, borradores:{}, notas:{}, ocupado:{}, confirmar:{},
+  errores:{}
+};
+const ESTADOS = {
+  asignada:"Asignada", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"
+};
+
+function aviso(texto, bien){
+  const a = $("aviso");
+  if (!texto){ a.hidden = true; return; }
+  a.textContent = texto; a.hidden = false;
+  a.className = "mensaje" + (bien ? " bien" : "");
+}
+function estadoDe(ot, rep){
+  if (ot.cerrada) return "cerrada";
+  if (!rep) return "asignada";
+  if (ot.devueltaEn && ot.devueltaEn >= (rep.enviado||0)) return "devuelta";
+  return "revision";
+}
+function nombre(wid){
+  const w = S.workers.get(wid) || {};
+  return w.etiqueta || S.nombres[wid] || "Trabajador sin nombre";
+}
+function fecha(ms){
+  if (!ms) return "";
+  const d = new Date(ms), p = n => String(n).padStart(2,"0");
+  return p(d.getDate())+"-"+p(d.getMonth()+1)+"-"+d.getFullYear()+" "+p(d.getHours())+":"+p(d.getMinutes());
+}
+function fechaCorta(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||"");
+  return m ? m[3]+"-"+m[2]+"-"+m[1] : "";
+}
+function hoyIso(){
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+function numTxt(n){ return "OT-" + String(n||0).padStart(4,"0"); }
+function todas(){
+  const out = [];
+  for (const [wid, arr] of S.ots){
+    const reps = S.reps.get(wid) || new Map();
+    for (const ot of arr){
+      const rep = reps.get(ot.id) || null;
+      out.push({ot, rep, wid, estado:estadoDe(ot, rep)});
+    }
+  }
+  const peso = S.admin ? {revision:0, devuelta:1, asignada:2, cerrada:3}
+                       : {devuelta:0, asignada:1, revision:2, cerrada:3};
+  out.sort((a,b) => (peso[a.estado]-peso[b.estado]) || ((b.ot.creada||0)-(a.ot.creada||0)));
+  return out;
+}
+function enFiltro(e){
+  if (S.filtro === "todas") return true;
+  if (S.filtro === "pendientes") return e === "asignada" || e === "devuelta";
+  return e === S.filtro;
+}
+
+/* ---------- render ---------- */
+function render(){
+  const act = document.activeElement, actId = act && act.id;
+  let sel = null;
+  try { if (actId && act.selectionStart != null) sel = [act.selectionStart, act.selectionEnd]; } catch(e){}
+
+  const items = todas();
+  const cuenta = {todas:items.length, pendientes:0, revision:0, cerrada:0};
+  for (const it of items){
+    if (it.estado === "asignada" || it.estado === "devuelta") cuenta.pendientes++;
+    else cuenta[it.estado]++;
+  }
+  const f = $("filtros"); f.hidden = false; f.replaceChildren();
+  const rotulos = [["todas","Todas"],["pendientes", S.admin ? "En terreno" : "Por hacer"],
+                   ["revision", S.admin ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]];
+  for (const [k, t] of rotulos){
+    f.append(h("button", {class:"filtro", type:"button", id:"f-"+k, "aria-pressed": String(S.filtro===k),
+      onclick: () => { S.filtro = k; render(); }}, h("b", null, cuenta[k]), h("span", null, t)));
+  }
+
+  const lista = $("lista"); lista.replaceChildren();
+  const vis = items.filter(it => enFiltro(it.estado));
+  if (!vis.length){
+    lista.append(h("p", {class:"nota"},
+      items.length ? "No hay órdenes en este estado."
+      : S.admin ? "Todavía no has asignado órdenes de trabajo."
+      : "No tienes órdenes de trabajo asignadas por ahora."));
+  }
+  for (const it of vis) lista.append(tarjeta(it));
+
+  if (actId){
+    const el = $(actId);
+    if (el){ el.focus({preventScroll:true}); if (sel) try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} }
+  }
+  resolverNombres();
+}
+
+function tarjeta(it){
+  const {ot, rep, wid, estado} = it;
+  const necesitaAccion = S.admin ? estado === "revision" : (estado === "asignada" || estado === "devuelta");
+  const abierto = (ot.id in S.abiertos) ? S.abiertos[ot.id] : necesitaAccion;
+  const vencida = !ot.cerrada && ot.fechaLimite && ot.fechaLimite < hoyIso();
+  const meta = h("div", {class:"meta"},
+    S.admin ? h("span", null, nombre(wid)) : null,
+    ot.ubicacion ? h("span", null, ot.ubicacion) : null,
+    ot.prioridad && ot.prioridad !== "Normal" ? h("span", null, "Prioridad " + ot.prioridad.toLowerCase()) : null,
+    ot.fechaLimite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(ot.fechaLimite)) : null);
+  const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+ot.id, "aria-expanded": String(abierto),
+    onclick: () => { S.abiertos[ot.id] = !abierto; render(); }},
+    h("div", {class:"ot-linea"}, h("span", {class:"num"}, numTxt(ot.numero)), h("span", {class:"pill e-"+estado}, ESTADOS[estado])),
+    h("h3", null, ot.titulo || "Sin título"), meta);
+  const card = h("article", {class:"ot e-"+estado}, cab);
+  if (!abierto) return card;
+
+  const cuerpo = h("div", {class:"ot-cuerpo"});
+  cuerpo.append(bloque("Detalle del trabajo", h("p", null, ot.detalle || "Sin detalle.")));
+  cuerpo.append(h("p", {class:"nota"}, "Asignada el " + fecha(ot.creada)));
+
+  if (estado === "devuelta" && ot.notaDevolucion)
+    cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), ot.notaDevolucion));
+
+  const editable = !S.admin && (estado === "asignada" || estado === "devuelta");
+  if (rep && !editable) cuerpo.append(vistaReporte(rep));
+  if (S.admin && rep && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, "Esperando que el trabajador corrija y reenvíe."));
+  if (S.admin && !rep) cuerpo.append(h("p", {class:"nota"}, "El trabajador aún no envía su reporte."));
+  if (editable) cuerpo.append(formReporte(ot, rep));
+  if (!S.admin && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
+  if (estado === "cerrada")
+    cuerpo.append(bloque("Cierre", h("p", null, "Cerrada el " + fecha(ot.cerrada) + (ot.notaCierre ? "\n" + ot.notaCierre : ""))));
+  if (S.errores[ot.id]) cuerpo.append(h("p", {class:"mensaje"}, S.errores[ot.id]));
+  if (S.admin) cuerpo.append(accionesAdmin(it));
+  card.append(cuerpo);
+  return card;
+}
+function bloque(rot, ...kids){ return h("div", {class:"bloque"}, h("span", {class:"rot"}, rot), ...kids); }
+function imagen(rep){
+  const src = rep.fotoId ? "/_blob/" + rep.fotoId : rep.fotoData;
+  if (!src) return h("p", {class:"nota"}, "Sin foto.");
+  const img = h("img", {class:"foto", alt:"Foto del trabajo realizado", src});
+  img.addEventListener("error", () => img.replaceWith(h("p", {class:"nota"}, "La foto no se pudo cargar en esta vista.")));
+  return img;
+}
+function vistaReporte(rep){
+  return h("div", {class:"lista"},
+    bloque("Código de actividad", h("p", {class:"cod"}, rep.codigo || "—")),
+    bloque("Trabajo realizado", h("p", null, rep.descripcion || "—")),
+    bloque("Foto", imagen(rep)),
+    h("p", {class:"nota"}, "Reporte enviado el " + fecha(rep.enviado)));
+}
+
+function formReporte(ot, rep){
+  const b = S.borradores[ot.id] || (S.borradores[ot.id] = {codigo: rep ? rep.codigo||"" : "", descripcion: rep ? rep.descripcion||"" : "", file:null, vista:null});
+  const ocupado = !!S.ocupado[ot.id];
+  const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista})
+             : (rep && (rep.fotoId || rep.fotoData)) ? imagen(rep) : null;
+  return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarReporte(ot, rep); }},
+    h("span", {class:"bloque"}, h("span", {class:"rot"}, "Tu reporte")),
+    h("label", {for:"cod-"+ot.id}, "Código de actividad",
+      h("input", {id:"cod-"+ot.id, required:true, maxlength:"40", value:b.codigo, placeholder:"Ej.: M-204",
+        oninput: ev => { b.codigo = ev.target.value; }})),
+    h("label", {for:"des-"+ot.id}, "Descripción del trabajo realizado",
+      h("textarea", {id:"des-"+ot.id, required:true, maxlength:"4000", value:b.descripcion,
+        oninput: ev => { b.descripcion = ev.target.value; }})),
+    h("label", {for:"fot-"+ot.id}, prev ? "Cambiar foto" : "Foto del trabajo",
+      h("input", {id:"fot-"+ot.id, type:"file", accept:"image/*",
+        onchange: ev => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          if (b.vista) URL.revokeObjectURL(b.vista);
+          b.file = file; b.vista = URL.createObjectURL(file); render();
+        }})),
+    prev,
+    h("div", {class:"acciones"},
+      h("button", {class:"btn principal", type:"submit", id:"env-"+ot.id, disabled:ocupado},
+        ocupado ? "Enviando…" : rep ? "Reenviar reporte" : "Enviar reporte")));
+}
+
+function accionesAdmin(it){
+  const {ot, rep, wid, estado} = it, id = ot.id, ocupado = !!S.ocupado[id];
+  const caja = h("div", {class:"lista"});
+  if (estado === "revision"){
+    caja.append(h("label", {for:"nota-"+id}, "Nota (obligatoria si devuelves la OT)",
+      h("textarea", {id:"nota-"+id, maxlength:"1000", value:S.notas[id]||"", style:"min-height:60px",
+        oninput: ev => { S.notas[id] = ev.target.value; }})));
+  }
+  const fila = h("div", {class:"acciones"});
+  const ref = S.db.doc("ots/"+wid+"/items/"+id);
+  if (estado === "revision"){
+    fila.append(h("button", {class:"btn principal", type:"button", id:"cer-"+id, disabled:ocupado,
+      onclick: () => escribir(id, () => ref.update({cerrada:Date.now(), notaCierre:(S.notas[id]||"").trim()}), () => { delete S.notas[id]; delete S.abiertos[id]; })}, "Cerrar OT"));
+    fila.append(h("button", {class:"btn", type:"button", id:"dev-"+id, disabled:ocupado,
+      onclick: () => {
+        const n = (S.notas[id]||"").trim();
+        if (!n){ S.errores[id] = "Escribe en la nota qué debe corregir el trabajador."; render(); return; }
+        escribir(id, () => ref.update({devueltaEn:Date.now(), notaDevolucion:n}), () => { delete S.notas[id]; });
+      }}, "Devolver al trabajador"));
+  }
+  if (estado === "cerrada"){
+    fila.append(h("button", {class:"btn", type:"button", id:"rea-"+id, disabled:ocupado,
+      onclick: () => escribir(id, () => ref.update({cerrada:0, notaCierre:""}))}, "Reabrir OT"));
+  }
+  if (S.confirmar[id]){
+    fila.append(h("button", {class:"btn peligro", type:"button", id:"eli2-"+id, disabled:ocupado,
+      onclick: () => escribir(id, async () => {
+        await ref.delete();
+        if (rep) await S.db.doc("reportes/"+wid+"/items/"+id).delete();
+      }, () => { delete S.confirmar[id]; })}, "Sí, eliminar esta OT"),
+      h("button", {class:"btn", type:"button", id:"can-"+id, onclick: () => { delete S.confirmar[id]; render(); }}, "Cancelar"));
+  } else {
+    fila.append(h("button", {class:"btn peligro", type:"button", id:"eli-"+id,
+      onclick: () => { S.confirmar[id] = true; render(); }}, "Eliminar"));
+  }
+  caja.append(fila);
+  return caja;
+}
+
+async function escribir(id, fn, alTerminar){
+  if (S.ocupado[id]) return;
+  S.ocupado[id] = true; delete S.errores[id]; render();
+  try { await fn(); if (alTerminar) alTerminar(); }
+  catch (e){ S.errores[id] = textoError(e); }
+  delete S.ocupado[id]; render();
+}
+function textoError(e){
+  const c = e && e.code;
+  if (c === "invalid_argument") return "No tienes permiso para guardar este cambio. Pide al administrador acceso como Colaborador.";
+  if (c === "quota_exceeded") return "El almacenamiento está lleno. El administrador debe eliminar órdenes antiguas.";
+  if (c === "resource_exhausted") return "Demasiadas operaciones seguidas. Espera unos segundos e intenta otra vez.";
+  if (c === "revoked") return "Tu acceso a esta página cambió. Recarga la página.";
+  return "No se pudo guardar. Revisa tu conexión e intenta otra vez.";
+}
+
+/* ---------- fotos ---------- */
+async function aJpeg(file, lado, calidad){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image(); img.src = url; await img.decode();
+    const s = Math.min(1, lado / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth*s)); c.height = Math.max(1, Math.round(img.naturalHeight*s));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", calidad));
+    if (!blob) throw new Error("jpeg");
+    return blob;
+  } finally { URL.revokeObjectURL(url); }
+}
+function aDataUrl(blob){
+  return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(blob); });
+}
+async function guardarFoto(file){
+  if (S.assets){
+    try {
+      const blob = await aJpeg(file, 1600, 0.8);
+      const r = await S.assets.upload(blob, {type:"image/jpeg"});
+      if (r && r.id) return {fotoId:r.id};
+    } catch (e){ if (!(e && e.code)) throw e; /* si falla el almacén, se guarda reducida dentro del reporte */ }
+  }
+  for (const [lado, q] of [[1100,.62],[900,.55],[720,.5],[560,.45]]){
+    const blob = await aJpeg(file, lado, q);
+    if (blob.size <= 165000) return {fotoData: await aDataUrl(blob)};
+  }
+  throw new Error("grande");
+}
+
+async function enviarReporte(ot, rep){
+  const id = ot.id, b = S.borradores[id];
+  if (!b || S.ocupado[id]) return;
+  const codigo = b.codigo.trim(), descripcion = b.descripcion.trim();
+  const tieneFotoPrevia = rep && (rep.fotoId || rep.fotoData);
+  if (!codigo || !descripcion){ S.errores[id] = "Completa el código de actividad y la descripción."; render(); return; }
+  if (!b.file && !tieneFotoPrevia){ S.errores[id] = "Agrega una foto del trabajo antes de enviar."; render(); return; }
+  S.ocupado[id] = true; delete S.errores[id]; render();
+  try {
+    let foto;
+    if (b.file){
+      try { foto = await guardarFoto(b.file); }
+      catch (e){ throw {foto:true}; }
+    } else foto = rep.fotoId ? {fotoId:rep.fotoId} : {fotoData:rep.fotoData};
+    await S.db.doc("reportes/"+S.yo+"/items/"+id).set(Object.assign({codigo, descripcion, enviado:Date.now()}, foto));
+    if (b.vista) URL.revokeObjectURL(b.vista);
+    delete S.borradores[id]; delete S.abiertos[id];
+  } catch (e){
+    S.errores[id] = e && e.foto ? "No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG." : textoError(e);
+  }
+  delete S.ocupado[id]; render();
+}
+
+/* ---------- nombres y equipo ---------- */
+let pidiendoNombres = false;
+async function resolverNombres(){
+  if (!S.user || !S.admin || pidiendoNombres) return;
+  const ids = [...S.workers.keys()];
+  if (!ids.length) return;
+  pidiendoNombres = true;
+  let cambio = false;
+  try {
+    const ps = await S.user.profiles(ids);
+    for (const id of ids){
+      const n = (ps[id] && ps[id].name) || "";
+      if (n !== (S.nombres[id]||"")){ S.nombres[id] = n; cambio = true; }
+    }
+  } catch (e){}
+  if (cambio){ renderEquipo(); render(); }
+  pidiendoNombres = false;
+}
+function renderEquipo(){
+  if (!S.admin) return;
+  const n = S.workers.size;
+  $("sin-equipo").hidden = n > 0;
+  $("equipo").hidden = n === 0;
+  $("nueva").hidden = n === 0;
+  $("equipo-titulo").textContent = "Equipo (" + n + ")";
+  const sel = $("n-trab"), previo = sel.value;
+  sel.replaceChildren(h("option", {value:""}, "Elige un trabajador"));
+  const lista = $("equipo-lista"); lista.replaceChildren();
+  for (const [wid, w] of S.workers){
+    sel.append(h("option", {value:wid}, nombre(wid)));
+    const inp = h("input", {id:"eti-"+wid, maxlength:"60", value:w.etiqueta||"", placeholder:S.nombres[wid] || "Nombre para mostrar"});
+    lista.append(h("div", {class:"equipo-fila"},
+      h("label", {for:"eti-"+wid}, S.nombres[wid] || "Trabajador sin nombre", inp),
+      h("button", {class:"btn", type:"button", id:"gua-"+wid, onclick: async ev => {
+        ev.target.disabled = true;
+        try { await S.db.doc("equipo/"+wid).update({etiqueta:inp.value.trim()}); aviso("Nombre guardado.", true); }
+        catch (e){ aviso(textoError(e)); }
+        ev.target.disabled = false;
+      }}, "Guardar")));
+  }
+  if (previo && S.workers.has(previo)) sel.value = previo;
+}
+
+/* ---------- datos ---------- */
+function alError(e){ aviso(textoError(e)); }
+function suscribir(wid, alLlegar){
+  if (S.subs.has(wid)) return;
+  const u1 = S.db.collection("ots/"+wid+"/items").onSnapshot(snap => {
+    S.ots.set(wid, snap.docs.map(d => Object.assign({id:d.id}, d.data())));
+    if (alLlegar) alLlegar(); render();
+  }, alError);
+  const u2 = S.db.collection("reportes/"+wid+"/items").onSnapshot(snap => {
+    const m = new Map(); snap.docs.forEach(d => m.set(d.id, d.data())); S.reps.set(wid, m); render();
+  }, alError);
+  S.subs.set(wid, [u1, u2]);
+}
+
+$("form-nueva").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const wid = $("n-trab").value, btn = $("n-enviar"), est = $("n-estado");
+  if (!wid){ est.textContent = "Elige un trabajador."; return; }
+  let max = 0;
+  for (const arr of S.ots.values()) for (const o of arr) if ((o.numero||0) > max) max = o.numero;
+  btn.disabled = true; est.textContent = "Guardando…";
+  try {
+    await S.db.collection("ots/"+wid+"/items").doc().set({
+      numero:max+1, titulo:$("n-titulo").value.trim(), detalle:$("n-detalle").value.trim(),
+      ubicacion:$("n-lugar").value.trim(), prioridad:$("n-prio").value, fechaLimite:$("n-fecha").value || "",
+      creada:Date.now()
+    });
+    est.textContent = numTxt(max+1) + " asignada a " + nombre(wid) + ".";
+    for (const k of ["n-titulo","n-detalle","n-lugar","n-fecha"]) $(k).value = "";
+    $("n-prio").value = "Normal";
+  } catch (e){ est.textContent = textoError(e); }
+  btn.disabled = false;
+});
+
+async function esperarClaude(){
+  for (let i = 0; i < 50 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
+  return window.claude && window.claude.use ? window.claude : null;
+}
+
+async function iniciar(){
+  const claude = await esperarClaude();
+  if (!claude){ $("rol").textContent = "Sin conexión"; aviso("Esta página necesita abrirse desde Claude para guardar y mostrar las órdenes."); return; }
+  const [db, user, assets] = await Promise.all([claude.use("db"), claude.use("user"), claude.use("assets")]);
+  S.db = db; S.user = user; S.assets = assets;
+  if (!db){ $("rol").textContent = "Sin acceso"; aviso("No se pudo abrir la base de datos. Inicia sesión en Claude y vuelve a abrir el enlace."); return; }
+  const yo = user ? await user.me() : {id:null, canEdit:false};
+  S.yo = yo.id; S.admin = !!yo.canEdit;
+
+  const reloj = setTimeout(() => aviso("Todavía no llegan los datos. Puede ser la conexión; se seguirá intentando."), 10000);
+  const llego = () => { clearTimeout(reloj); if ($("aviso").textContent.startsWith("Todavía")) aviso(""); };
+
+  if (S.admin){
+    $("rol").textContent = "Administrador";
+    db.collection("equipo").onSnapshot(snap => {
+      llego();
+      const vistos = new Set();
+      snap.docs.forEach(d => { vistos.add(d.id); S.workers.set(d.id, d.data() || {}); suscribir(d.id); });
+      for (const id of [...S.workers.keys()]) if (!vistos.has(id)){
+        S.workers.delete(id); S.ots.delete(id); S.reps.delete(id);
+        (S.subs.get(id) || []).forEach(u => u()); S.subs.delete(id);
+      }
+      renderEquipo(); render();
+    }, e => { clearTimeout(reloj); alError(e); });
+    return;
+  }
+
+  if (!S.yo){ $("rol").textContent = "Sin acceso"; clearTimeout(reloj); aviso("No se reconoce tu cuenta en esta página. Pide al administrador que te agregue como Colaborador."); return; }
+  $("rol").textContent = "Trabajador";
+  try {
+    const ref = db.doc("equipo/"+S.yo), snap = await ref.get();
+    if (!snap.exists) await ref.set({ingreso:Date.now()});
+  } catch (e){
+    clearTimeout(reloj);
+    aviso("Tu cuenta solo puede ver esta página. Pide al administrador que te dé acceso como Colaborador para recibir y reportar órdenes.");
+    return;
+  }
+  S.workers.set(S.yo, {});
+  suscribir(S.yo, llego);
+}
+iniciar();
+})();
+</script>
+</body>
+</html>
