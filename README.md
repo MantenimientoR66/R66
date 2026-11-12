@@ -28,7 +28,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 ## Incidencias fuera de horario
 
 - El administrador crea en **Equipo** un usuario de tipo **Centro de control** y marca "de turno" a los técnicos que reciben incidencias.
-- El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados no están considerados.
+- El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados cuentan completos como fuera de horario: vienen cargados los que quedan de 2026 y el administrador agrega los siguientes en la sección **Feriados**.
 - Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
 - El técnico de turno la cierra describiendo cómo se resolvió (foto opcional). El centro de control y el administrador ven ese cierre.
 

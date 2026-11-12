@@ -251,6 +251,29 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </details>
     </section>
 
+    <section class="panel" id="feriados" hidden>
+      <details>
+        <summary id="fer-titulo">Feriados</summary>
+        <p class="nota">En un feriado, el centro de control puede crear incidencias durante todo el día, igual que en fin de semana.</p>
+        <div class="lista" id="fer-lista" style="margin-top:10px"></div>
+        <form id="form-fer" class="lista" style="margin-top:14px" autocomplete="off">
+          <h3>Agregar feriado</h3>
+          <div class="fila">
+            <label for="fer-fecha">Fecha
+              <input id="fer-fecha" type="date" required>
+            </label>
+            <label for="fer-nombre">Nombre
+              <input id="fer-nombre" maxlength="80" placeholder="Ej.: Año Nuevo">
+            </label>
+          </div>
+          <div class="acciones">
+            <button class="btn" type="submit" id="fer-enviar">Agregar feriado</button>
+            <span class="nota" id="fer-estado"></span>
+          </div>
+        </form>
+      </details>
+    </section>
+
     <section class="panel" id="equipo" hidden>
       <details>
         <summary id="equipo-titulo">Equipo</summary>
@@ -304,8 +327,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=4"></script>
-<script src="calendario.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="config.js?v=5"></script>
+<script src="calendario.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

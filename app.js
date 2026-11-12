@@ -20,7 +20,7 @@ function h(tag, attrs, ...kids){
 
 const CLAVE_TOKEN = "ot_r66_token";
 const S = {
-  sb:null, token:null, yo:null, admin:false, control:false, fuera:false, huellaInc:"", ordenes:[], trabajadores:[], plan:[], huellaPlan:"", importar:null,
+  feriados:[], huellaFer:"", sb:null, token:null, yo:null, admin:false, control:false, fuera:false, huellaInc:"", ordenes:[], trabajadores:[], plan:[], huellaPlan:"", importar:null,
   huella:"", huellaEquipo:"", filtro:"todas", abiertos:{}, borradores:{}, notas:{}, ocupado:{},
   confirmar:{}, errores:{}, fotos:{}, pidiendoFoto:{}, temporal:"", reloj:null
 };
@@ -92,7 +92,7 @@ async function rpc(fn, args){
 
 /* ---------- acceso ---------- */
 function cerrarLocal(msg){
-  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaInc = ""; S.importar = null;
+  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaInc = ""; S.huellaFer = ""; S.importar = null;
   S.fotos = {}; S.borradores = {}; S.temporal = "";
   $("rol").textContent = "";
   vista("v-login");
@@ -113,7 +113,7 @@ function abrirApp(){
   S.admin = S.yo.rol === "admin"; S.control = S.yo.rol === "control"; S.temporal = "";
   $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : S.control ? " · Centro de control" : " · Técnico");
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
-  $("incidencia").hidden = !S.control;
+  $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin;
   aviso("");
   vista("v-app"); render(); cargar();
   S.reloj = setInterval(cargar, 30000);
@@ -178,6 +178,8 @@ async function cargar(){
     S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
     if (hp !== S.huellaPlan){ S.huellaPlan = hp; renderPlan(); }
+    const hf = JSON.stringify(d.feriados || []);
+    if (hf !== S.huellaFer){ S.huellaFer = hf; S.feriados = d.feriados || []; renderFeriados(); }
     S.fuera = !!d.fuera_horario;
     const hi = he + "|" + S.fuera;
     if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
@@ -510,7 +512,7 @@ function renderIncidencia(){
   $("i-enviar").disabled = !S.fuera;
   $("i-horario").textContent = S.fuera
     ? "Estás fuera del horario laboral: puedes crear incidencias para el personal de turno."
-    : "Ahora es horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30). Las incidencias solo se pueden crear fuera de ese horario.";
+    : "Ahora es horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30). Las incidencias solo se pueden crear fuera de ese horario, o en fin de semana y feriados.";
 }
 $("form-inc").addEventListener("submit", async ev => {
   ev.preventDefault();
@@ -525,6 +527,34 @@ $("form-inc").addEventListener("submit", async ev => {
     await cargar();
   } catch (e){ est.textContent = e.message; }
   $("i-enviar").disabled = !S.fuera;
+});
+
+/* ---------- feriados ---------- */
+function renderFeriados(){
+  if (!S.admin) return;
+  $("fer-titulo").textContent = "Feriados (" + S.feriados.length + " próximos)";
+  const lista = $("fer-lista"); lista.replaceChildren();
+  if (!S.feriados.length) lista.append(h("p", {class:"nota"}, "No hay feriados cargados de hoy en adelante."));
+  for (const f of S.feriados){
+    lista.append(h("div", {class:"acciones"},
+      h("b", null, diaTxt(f.fecha)), h("span", null, f.nombre || ""),
+      h("button", {class:"btn chico", type:"button", id:"fq-"+f.fecha, onclick: async ev => {
+        ev.target.disabled = true;
+        try { await rpc("ot_feriado_quitar", {p_token:S.token, p_fecha:f.fecha}); await cargar(); }
+        catch (e){ $("fer-estado").textContent = e.message; ev.target.disabled = false; }
+      }}, "Quitar")));
+  }
+}
+$("form-fer").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const est = $("fer-estado");
+  $("fer-enviar").disabled = true; est.textContent = "Guardando…";
+  try {
+    await rpc("ot_feriado_agregar", {p_token:S.token, p_fecha:$("fer-fecha").value, p_nombre:$("fer-nombre").value});
+    est.textContent = "Feriado agregado."; $("fer-fecha").value = $("fer-nombre").value = "";
+    await cargar();
+  } catch (e){ est.textContent = e.message; }
+  $("fer-enviar").disabled = false;
 });
 
 /* ---------- plan preventivo ---------- */

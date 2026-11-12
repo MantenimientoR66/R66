@@ -57,6 +57,24 @@ alter table public.ordenes add column if not exists cantidad numeric; -- cantida
 alter table public.ordenes add column if not exists unidad text;
 alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual' o 'plan'
 
+-- Feriados: esos días completos cuentan como fuera del horario laboral.
+create table if not exists public.feriados (
+  fecha date primary key,
+  nombre text not null default ''
+);
+alter table public.feriados enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.feriados from anon, authenticated;
+  end if;
+end $$;
+-- Feriados nacionales que quedan en 2026. Los de 2027 en adelante los agrega el administrador desde la página.
+insert into public.feriados(fecha, nombre) values
+  ('2026-12-08', 'Inmaculada Concepción'),
+  ('2026-12-25', 'Navidad')
+on conflict (fecha) do nothing;
+
 -- Plan de mantenimiento preventivo: una fila por día, técnico y actividad.
 -- Cuando llega la fecha, la fila se convierte sola en una orden de trabajo.
 create table if not exists public.plan_preventivo (
@@ -280,10 +298,12 @@ end $$;
 -- ---------- incidencias fuera de horario (centro de control) ----------
 
 -- Horario laboral, hora de Chile: lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30.
+-- Sábados, domingos y feriados cuentan completos como fuera de horario.
 create or replace function public.ot_fuera_horario() returns boolean
 language plpgsql stable security definer set search_path = public, extensions as $$
 declare ahora timestamp := now() at time zone 'America/Santiago'; d int := extract(isodow from ahora); h time := ahora::time;
 begin
+  if exists (select 1 from public.feriados where fecha = ahora::date) then return true; end if;
   if d between 1 and 4 then return h < time '08:30' or h >= time '18:30'; end if;
   if d = 5 then return h < time '08:30' or h >= time '14:30'; end if;
   return true;
@@ -296,7 +316,7 @@ begin
   u := public.ot_quien(p_token);
   if u.rol <> 'control' then raise exception 'Solo el centro de control puede crear incidencias.'; end if;
   if not public.ot_fuera_horario() then
-    raise exception 'Las incidencias solo se pueden crear fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30).';
+    raise exception 'Las incidencias solo se pueden crear fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, sin contar feriados).';
   end if;
   if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo) then
     raise exception 'Elige a un técnico de turno activo.';
@@ -307,6 +327,22 @@ begin
             trim(coalesce(p_ubicacion,'')), 'Urgente')
     returning numero into n;
   return n;
+end $$;
+
+create or replace function public.ot_feriado_agregar(p_token text, p_fecha date, p_nombre text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  if p_fecha is null then raise exception 'Elige la fecha del feriado.'; end if;
+  insert into public.feriados(fecha, nombre) values (p_fecha, trim(coalesce(p_nombre,'')))
+    on conflict (fecha) do update set nombre = excluded.nombre;
+end $$;
+
+create or replace function public.ot_feriado_quitar(p_token text, p_fecha date) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  delete from public.feriados where fecha = p_fecha;
 end $$;
 
 -- ---------- plan preventivo ----------
@@ -372,7 +408,7 @@ end $$;
 
 create or replace function public.ot_listar(p_token text) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
-declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb := '[]'::jsonb;
+declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb := '[]'::jsonb; fers jsonb := '[]'::jsonb;
 begin
   u := public.ot_quien(p_token);
   perform public.ot_generar_plan();
@@ -397,11 +433,13 @@ begin
       'actividad', pl.actividad, 'cantidad', pl.cantidad, 'unidad', pl.unidad)
       order by pl.fecha, t.nombre, pl.actividad), '[]'::jsonb) into plan
       from public.plan_preventivo pl join public.usuarios t on t.id = pl.trabajador_id where pl.generada is null;
+    select coalesce(jsonb_agg(jsonb_build_object('fecha', fecha, 'nombre', nombre) order by fecha), '[]'::jsonb) into fers
+      from public.feriados where fecha >= (now() at time zone 'America/Santiago')::date;
   elsif u.rol = 'control' then
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', de_turno)
       order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador' and activo;
   end if;
-  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'fuera_horario', public.ot_fuera_horario());
+  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers, 'fuera_horario', public.ot_fuera_horario());
 end $$;
 
 create or replace function public.ot_foto(p_token text, p_ot uuid) returns text
