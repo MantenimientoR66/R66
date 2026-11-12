@@ -20,7 +20,7 @@ function h(tag, attrs, ...kids){
 
 const CLAVE_TOKEN = "ot_r66_token";
 const S = {
-  sb:null, token:null, yo:null, admin:false, ordenes:[], trabajadores:[], plan:[], huellaPlan:"", importar:null,
+  sb:null, token:null, yo:null, admin:false, control:false, fuera:false, huellaInc:"", ordenes:[], trabajadores:[], plan:[], huellaPlan:"", importar:null,
   huella:"", huellaEquipo:"", filtro:"todas", abiertos:{}, borradores:{}, notas:{}, ocupado:{},
   confirmar:{}, errores:{}, fotos:{}, pidiendoFoto:{}, temporal:"", reloj:null
 };
@@ -92,7 +92,7 @@ async function rpc(fn, args){
 
 /* ---------- acceso ---------- */
 function cerrarLocal(msg){
-  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.importar = null;
+  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaInc = ""; S.importar = null;
   S.fotos = {}; S.borradores = {}; S.temporal = "";
   $("rol").textContent = "";
   vista("v-login");
@@ -110,9 +110,10 @@ function entrar(sesion){
   abrirApp();
 }
 function abrirApp(){
-  S.admin = S.yo.rol === "admin"; S.temporal = "";
-  $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : " · Técnico");
+  S.admin = S.yo.rol === "admin"; S.control = S.yo.rol === "control"; S.temporal = "";
+  $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : S.control ? " · Centro de control" : " · Técnico");
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
+  $("incidencia").hidden = !S.control;
   aviso("");
   vista("v-app"); render(); cargar();
   S.reloj = setInterval(cargar, 30000);
@@ -177,6 +178,9 @@ async function cargar(){
     S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
     if (hp !== S.huellaPlan){ S.huellaPlan = hp; renderPlan(); }
+    S.fuera = !!d.fuera_horario;
+    const hi = he + "|" + S.fuera;
+    if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
     if (hu !== S.huella){ S.huella = hu; render(); }
     if ($("aviso").textContent.startsWith("No hay conexión")) aviso("");
   } catch (e){ if (S.token && !$("v-app").hidden) aviso(e.message); }
@@ -209,15 +213,16 @@ function render(){
   let sel = null;
   try { if (actId && act.selectionStart != null) sel = [act.selectionStart, act.selectionEnd]; } catch(e){}
 
-  const peso = S.admin ? {revision:0, devuelta:1, asignada:2, cerrada:3} : {devuelta:0, asignada:1, revision:2, cerrada:3};
+  const jefe = S.admin || S.control;
+  const peso = jefe ? {revision:0, devuelta:1, asignada:2, cerrada:3} : {devuelta:0, asignada:1, revision:2, cerrada:3};
   const items = S.ordenes.slice().sort((a,b) => (peso[a.estado]-peso[b.estado]) || (new Date(b.creada) - new Date(a.creada)));
   const cuenta = {todas:items.length, pendientes:0, revision:0, cerrada:0};
   for (const o of items){
     if (o.estado === "asignada" || o.estado === "devuelta") cuenta.pendientes++; else cuenta[o.estado]++;
   }
   const f = $("filtros"); f.replaceChildren();
-  const rotulos = [["todas","Todas"],["pendientes", S.admin ? "En terreno" : "Por hacer"],
-                   ["revision", S.admin ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]];
+  const rotulos = [["todas","Todas"],["pendientes", jefe ? "En terreno" : "Por hacer"],
+                   ["revision", jefe ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]];
   for (const [k, t] of rotulos){
     f.append(h("button", {class:"filtro", type:"button", id:"f-"+k, "aria-pressed": String(S.filtro===k),
       onclick: () => { S.filtro = k; render(); }}, h("b", null, cuenta[k]), h("span", null, t)));
@@ -227,6 +232,7 @@ function render(){
   if (!vis.length){
     lista.append(h("p", {class:"nota"},
       items.length ? "No hay órdenes en este estado."
+      : S.control ? "No hay incidencias registradas."
       : S.admin ? "Todavía no has asignado órdenes de trabajo."
       : "No tienes órdenes de trabajo asignadas por ahora."));
   }
@@ -255,19 +261,21 @@ function imagen(o){
 }
 
 function tarjeta(o){
-  const estado = o.estado, id = o.id;
-  const necesitaAccion = S.admin ? estado === "revision" : (estado === "asignada" || estado === "devuelta");
+  const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", jefe = S.admin || S.control;
+  const necesitaAccion = S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "devuelta");
+  const rotEstado = inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
   const abierto = (id in S.abiertos) ? S.abiertos[id] : necesitaAccion;
   const vencida = estado !== "cerrada" && o.fecha_limite && o.fecha_limite < hoyIso();
   const meta = h("div", {class:"meta"},
-    S.admin ? h("span", null, o.trabajador) : null,
+    jefe ? h("span", null, o.trabajador) : null,
+    inc ? h("span", null, "Incidencia fuera de horario") : null,
     o.ubicacion ? h("span", null, o.ubicacion) : null,
     o.origen === "plan" ? h("span", null, "Preventivo") : null,
-    o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
+    !inc && o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
     onclick: () => { S.abiertos[id] = !abierto; render(); }},
-    h("div", {class:"ot-linea"}, h("span", {class:"num"}, numTxt(o.numero)), h("span", {class:"pill e-"+estado}, ESTADOS[estado])),
+    h("div", {class:"ot-linea"}, h("span", {class:"num"}, (inc ? "INC-" : "OT-") + String(o.numero||0).padStart(4,"0")), h("span", {class:"pill e-"+estado}, rotEstado)),
     h("h3", null, o.titulo), meta);
   const card = h("article", {class:"ot e-"+estado}, cab);
   if (!abierto) return card;
@@ -275,25 +283,25 @@ function tarjeta(o){
   const cuerpo = h("div", {class:"ot-cuerpo"});
   if (o.actividad) cuerpo.append(bloque("Código de actividad", h("p", {class:"cod"}, o.actividad)));
   if (o.cantidad != null) cuerpo.append(bloque("Cantidad programada", h("p", {class:"cod"}, cantTxt(o.cantidad) + " " + (o.unidad || "UN"))));
-  cuerpo.append(bloque("Detalle del trabajo", h("p", null, o.detalle)));
-  cuerpo.append(h("p", {class:"nota"}, "Asignada el " + fecha(o.creada)));
+  cuerpo.append(bloque(inc ? "Qué está pasando" : "Detalle del trabajo", h("p", null, o.detalle)));
+  cuerpo.append(h("p", {class:"nota"}, inc ? "Informada el " + fecha(o.creada) + (o.creada_por ? " por " + o.creada_por : "") : "Asignada el " + fecha(o.creada)));
   if (estado === "devuelta" && o.nota_devolucion)
     cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), o.nota_devolucion));
 
-  const editable = !S.admin && (estado === "asignada" || estado === "devuelta");
+  const editable = !jefe && (estado === "asignada" || estado === "devuelta");
   if (o.enviado && !editable){
     cuerpo.append(h("div", {class:"lista"},
-      bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
-      bloque("Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
+      inc ? null : bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
+      bloque(inc ? "Cómo se resolvió" : "Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
       bloque("Foto", imagen(o)),
-      h("p", {class:"nota"}, "Reporte enviado el " + fecha(o.enviado))));
+      h("p", {class:"nota"}, (inc ? "Cierre informado el " : "Reporte enviado el ") + fecha(o.enviado))));
   }
-  if (S.admin && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, "Esperando que el técnico corrija y reenvíe."));
-  if (S.admin && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, "El técnico aún no envía su reporte."));
+  if (jefe && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, inc ? "Reabierta. Esperando que el técnico la cierre otra vez." : "Esperando que el técnico corrija y reenvíe."));
+  if (jefe && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, inc ? "El técnico de turno aún no la cierra." : "El técnico aún no envía su reporte."));
   if (editable) cuerpo.append(formReporte(o));
-  if (!S.admin && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
+  if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
   if (estado === "cerrada")
-    cuerpo.append(bloque("Cierre", h("p", null, "Cerrada el " + fecha(o.cerrada) + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
+    cuerpo.append(bloque("Cierre", h("p", null, "Cerrada el " + fecha(o.cerrada) + (inc ? " por " + o.trabajador : "") + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
   if (S.errores[id]) cuerpo.append(h("p", {class:"mensaje"}, S.errores[id]));
   if (S.admin) cuerpo.append(accionesAdmin(o));
   card.append(cuerpo);
@@ -301,19 +309,19 @@ function tarjeta(o){
 }
 
 function formReporte(o){
-  const id = o.id;
+  const id = o.id, inc = o.tipo === "incidencia";
   const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null});
   const ocupado = !!S.ocupado[id];
   const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o) : null;
   const selCod = h("select", {id:"cod-"+id, required:true, onchange: ev => { b.codigo = ev.target.value; }});
   opcionesActividad(selCod, b.codigo);
   return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarReporte(o); }},
-    h("span", {class:"bloque"}, h("span", {class:"rot"}, "Tu reporte")),
-    h("label", {for:"cod-"+id}, "Código de actividad realizado", selCod),
-    h("label", {for:"des-"+id}, "Descripción del trabajo realizado",
+    h("span", {class:"bloque"}, h("span", {class:"rot"}, inc ? "Cierre de la incidencia" : "Tu reporte")),
+    inc ? null : h("label", {for:"cod-"+id}, "Código de actividad realizado", selCod),
+    h("label", {for:"des-"+id}, inc ? "Cómo se resolvió" : "Descripción del trabajo realizado",
       h("textarea", {id:"des-"+id, required:true, maxlength:"4000", value:b.descripcion,
         oninput: ev => { b.descripcion = ev.target.value; }})),
-    h("label", {for:"fot-"+id}, prev ? "Cambiar foto" : "Foto del trabajo",
+    h("label", {for:"fot-"+id}, prev ? "Cambiar foto" : inc ? "Foto (opcional)" : "Foto del trabajo",
       h("input", {id:"fot-"+id, type:"file", accept:"image/*",
         onchange: ev => {
           const file = ev.target.files && ev.target.files[0];
@@ -324,7 +332,7 @@ function formReporte(o){
     prev,
     h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"submit", id:"env-"+id, disabled:ocupado},
-        ocupado ? "Enviando…" : o.enviado ? "Reenviar reporte" : "Enviar reporte")));
+        ocupado ? "Enviando…" : inc ? "Cerrar incidencia" : o.enviado ? "Reenviar reporte" : "Enviar reporte")));
 }
 
 function accionesAdmin(o){
@@ -392,10 +400,11 @@ async function prepararFoto(file){
   throw new Error("foto");
 }
 async function enviarReporte(o){
-  const id = o.id, b = S.borradores[id];
+  const id = o.id, b = S.borradores[id], inc = o.tipo === "incidencia";
   if (!b || S.ocupado[id]) return;
-  if (!b.codigo.trim() || !b.descripcion.trim()){ S.errores[id] = "Completa el código de actividad y la descripción."; render(); return; }
-  if (!b.file && !o.tiene_foto){ S.errores[id] = "Agrega una foto del trabajo antes de enviar."; render(); return; }
+  if (inc && !b.descripcion.trim()){ S.errores[id] = "Describe cómo se resolvió la incidencia."; render(); return; }
+  if (!inc && (!b.codigo.trim() || !b.descripcion.trim())){ S.errores[id] = "Completa el código de actividad y la descripción."; render(); return; }
+  if (!inc && !b.file && !o.tiene_foto){ S.errores[id] = "Agrega una foto del trabajo antes de enviar."; render(); return; }
   S.ocupado[id] = true; delete S.errores[id]; render();
   try {
     let foto = null;
@@ -403,7 +412,7 @@ async function enviarReporte(o){
       try { foto = await prepararFoto(b.file); }
       catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
     }
-    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:b.codigo, p_descripcion:b.descripcion, p_foto:foto});
+    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_foto:foto});
     if (b.vista) URL.revokeObjectURL(b.vista);
     delete S.borradores[id]; delete S.abiertos[id];
   } catch (e){ S.errores[id] = e.message; }
@@ -419,7 +428,7 @@ function claveAzar(){
 }
 function renderEquipo(){
   if (!S.admin) return;
-  const activos = S.trabajadores.filter(t => t.activo);
+  const activos = S.trabajadores.filter(t => t.activo && t.rol !== "control");
   $("equipo-titulo").textContent = "Equipo (" + S.trabajadores.length + ")";
   const sel = $("n-trab"), previo = sel.value;
   sel.replaceChildren(h("option", {value:""}, "Elige un técnico"));
@@ -439,7 +448,7 @@ function renderEquipo(){
       btn.disabled = false;
     };
     lista.append(h("div", {class:"trab"},
-      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario)),
+      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario + (t.rol === "control" ? " · Centro de control" : t.de_turno ? " · De turno" : ""))),
       h("span", {class:"nota"}, estado),
       h("label", {for:"tc-"+t.id}, "Clave temporal (mínimo 8 caracteres)", inp),
       h("div", {class:"acciones"},
@@ -449,6 +458,8 @@ function renderEquipo(){
           if (c.length < 8){ est.textContent = "La clave temporal debe tener al menos 8 caracteres."; return; }
           hacer(ev.target, "ot_clave_trabajador", {p_clave:c}, "Clave temporal guardada: " + c);
         }}, "Guardar clave temporal"),
+        t.rol === "control" ? null : h("button", {class:"btn chico", type:"button", id:"tt-"+t.id,
+          onclick: ev => hacer(ev.target, "ot_turno", {p_turno:!t.de_turno}, "")}, t.de_turno ? "Quitar de turno" : "Marcar de turno"),
         h("button", {class:"btn chico" + (t.activo ? " peligro" : ""), type:"button", id:"ta-"+t.id,
           onclick: ev => hacer(ev.target, "ot_activar_trabajador", {p_activo:!t.activo}, "")}, t.activo ? "Desactivar" : "Activar")),
       est));
@@ -459,8 +470,8 @@ $("form-trab").addEventListener("submit", async ev => {
   const est = $("t-estado"), u = $("t-usuario").value, c = $("t-clave").value;
   $("t-enviar").disabled = true; est.textContent = "Guardando…";
   try {
-    await rpc("ot_crear_trabajador", {p_token:S.token, p_usuario:u, p_nombre:$("t-nombre").value, p_clave:c});
-    est.textContent = "Técnico agregado. Usuario: " + u.trim().toLowerCase() + " · Clave temporal: " + c;
+    await rpc("ot_crear_trabajador", {p_token:S.token, p_usuario:u, p_nombre:$("t-nombre").value, p_clave:c, p_rol:$("t-rol").value});
+    est.textContent = "Usuario agregado. Usuario: " + u.trim().toLowerCase() + " · Clave temporal: " + c;
     $("t-nombre").value = $("t-usuario").value = $("t-clave").value = "";
     await cargar();
   } catch (e){ est.textContent = e.message; }
@@ -487,6 +498,34 @@ $("form-nueva").addEventListener("submit", async ev => {
 });
 
 opcionesActividad($("n-act"), "");
+
+/* ---------- incidencias (centro de control) ---------- */
+function renderIncidencia(){
+  const sel = $("i-trab"), previo = sel.value;
+  const deTurno = S.trabajadores.filter(t => t.de_turno), lista = deTurno.length ? deTurno : S.trabajadores;
+  sel.replaceChildren(h("option", {value:""}, "Elige al técnico de turno"));
+  for (const t of lista) sel.append(h("option", {value:t.id}, t.nombre));
+  if (previo && lista.some(t => t.id === previo)) sel.value = previo;
+  else if (lista.length === 1) sel.value = lista[0].id;
+  $("i-enviar").disabled = !S.fuera;
+  $("i-horario").textContent = S.fuera
+    ? "Estás fuera del horario laboral: puedes crear incidencias para el personal de turno."
+    : "Ahora es horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30). Las incidencias solo se pueden crear fuera de ese horario.";
+}
+$("form-inc").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const est = $("i-estado"), wid = $("i-trab").value;
+  if (!wid){ est.textContent = "Elige al técnico de turno."; return; }
+  $("i-enviar").disabled = true; est.textContent = "Enviando…";
+  try {
+    const n = await rpc("ot_incidencia_crear", {p_token:S.token, p_trabajador:wid, p_descripcion:$("i-desc").value, p_ubicacion:$("i-lugar").value});
+    const t = S.trabajadores.find(x => x.id === wid);
+    est.textContent = "INC-" + String(n).padStart(4,"0") + " enviada" + (t ? " a " + t.nombre : "") + ".";
+    $("i-desc").value = $("i-lugar").value = "";
+    await cargar();
+  } catch (e){ est.textContent = e.message; }
+  $("i-enviar").disabled = !S.fuera;
+});
 
 /* ---------- plan preventivo ---------- */
 function cantTxt(n){ return String(Number(n)).replace(".", ","); }
@@ -542,7 +581,7 @@ $("p-archivo").addEventListener("change", async ev => {
     let plan = [], avisos = [];
     for (const nombre of wb.SheetNames){
       const filas = XLSX.utils.sheet_to_json(wb.Sheets[nombre], {header:1, raw:true, defval:null});
-      const r = leerCalendario(filas, ACTIVIDADES, S.trabajadores.filter(t => t.activo));
+      const r = leerCalendario(filas, ACTIVIDADES, S.trabajadores.filter(t => t.activo && t.rol !== "control"));
       plan = plan.concat(r.plan); avisos = avisos.concat(r.avisos);
     }
     plan.sort((x, y) => x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : x.tecnico.localeCompare(y.tecnico));

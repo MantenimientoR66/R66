@@ -25,6 +25,13 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 4. En GitHub, abre **Settings > Pages** de este repositorio y publica desde la rama `main`, carpeta `/ (root)`.
 5. Abre la dirección que entrega GitHub Pages y crea la contraseña del administrador de inmediato: mientras no exista, cualquiera que abra la página podría crearla.
 
+## Incidencias fuera de horario
+
+- El administrador crea en **Equipo** un usuario de tipo **Centro de control** y marca "de turno" a los técnicos que reciben incidencias.
+- El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados no están considerados.
+- Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
+- El técnico de turno la cierra describiendo cómo se resolvió (foto opcional). El centro de control y el administrador ven ese cierre.
+
 ## Plan preventivo
 
 - El administrador carga el calendario semanal (Excel) en la sección **Plan preventivo**. Cada celda de día con el nombre de un técnico es una asignación.

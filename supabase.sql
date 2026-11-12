@@ -46,6 +46,12 @@ create table if not exists public.ordenes (
 
 alter table public.usuarios alter column clave drop not null;
 alter table public.usuarios add column if not exists debe_cambiar boolean not null default false;
+alter table public.usuarios add column if not exists de_turno boolean not null default false; -- técnico de turno fuera de horario
+-- Roles: admin, trabajador (técnico de terreno) y control (centro de control).
+alter table public.usuarios drop constraint if exists usuarios_rol_check;
+alter table public.usuarios add constraint usuarios_rol_check check (rol in ('admin','trabajador','control'));
+alter table public.ordenes add column if not exists tipo text not null default 'ot'; -- 'ot' o 'incidencia'
+alter table public.ordenes add column if not exists creada_por uuid references public.usuarios(id);
 alter table public.ordenes add column if not exists actividad text; -- código de actividad que asigna el administrador
 alter table public.ordenes add column if not exists cantidad numeric; -- cantidad programada para ese día
 alter table public.ordenes add column if not exists unidad text;
@@ -227,17 +233,19 @@ end $$;
 
 -- ---------- equipo (solo administrador) ----------
 
-create or replace function public.ot_crear_trabajador(p_token text, p_usuario text, p_nombre text, p_clave text) returns void
+drop function if exists public.ot_crear_trabajador(text, text, text, text);
+create or replace function public.ot_crear_trabajador(p_token text, p_usuario text, p_nombre text, p_clave text, p_rol text default 'trabajador') returns void
 language plpgsql security definer set search_path = public, extensions as $$
 declare v text;
 begin
   perform public.ot_admin(p_token);
+  if p_rol not in ('trabajador','control') then raise exception 'El rol debe ser técnico o centro de control.'; end if;
   v := public.ot_validar(p_usuario, p_nombre, p_clave);
   if exists (select 1 from public.usuarios where usuario = v) then
     raise exception 'El usuario "%" ya existe. Elige otro.', v;
   end if;
   insert into public.usuarios(usuario, nombre, clave, rol, debe_cambiar)
-    values (v, trim(p_nombre), crypt(p_clave, gen_salt('bf')), 'trabajador', true);
+    values (v, trim(p_nombre), crypt(p_clave, gen_salt('bf')), p_rol, true);
 end $$;
 
 create or replace function public.ot_clave_trabajador(p_token text, p_id uuid, p_clave text) returns void
@@ -246,8 +254,8 @@ begin
   perform public.ot_admin(p_token);
   if length(coalesce(p_clave,'')) < 8 then raise exception 'La contraseña debe tener al menos 8 caracteres.'; end if;
   update public.usuarios set clave = crypt(p_clave, gen_salt('bf')), fallos = 0, bloqueado_hasta = null, debe_cambiar = true
-    where id = p_id and rol = 'trabajador';
-  if not found then raise exception 'No se encontró al trabajador.'; end if;
+    where id = p_id and rol in ('trabajador','control');
+  if not found then raise exception 'No se encontró al usuario.'; end if;
   delete from public.sesiones where usuario_id = p_id;
 end $$;
 
@@ -255,9 +263,50 @@ create or replace function public.ot_activar_trabajador(p_token text, p_id uuid,
 language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform public.ot_admin(p_token);
-  update public.usuarios set activo = p_activo where id = p_id and rol = 'trabajador';
-  if not found then raise exception 'No se encontró al trabajador.'; end if;
+  update public.usuarios set activo = p_activo where id = p_id and rol in ('trabajador','control');
+  if not found then raise exception 'No se encontró al usuario.'; end if;
   if not p_activo then delete from public.sesiones where usuario_id = p_id; end if;
+end $$;
+
+-- Marca o desmarca a un técnico como personal de turno (el que recibe incidencias fuera de horario).
+create or replace function public.ot_turno(p_token text, p_id uuid, p_turno boolean) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  update public.usuarios set de_turno = coalesce(p_turno, false) where id = p_id and rol = 'trabajador';
+  if not found then raise exception 'No se encontró al técnico.'; end if;
+end $$;
+
+-- ---------- incidencias fuera de horario (centro de control) ----------
+
+-- Horario laboral, hora de Chile: lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30.
+create or replace function public.ot_fuera_horario() returns boolean
+language plpgsql stable security definer set search_path = public, extensions as $$
+declare ahora timestamp := now() at time zone 'America/Santiago'; d int := extract(isodow from ahora); h time := ahora::time;
+begin
+  if d between 1 and 4 then return h < time '08:30' or h >= time '18:30'; end if;
+  if d = 5 then return h < time '08:30' or h >= time '14:30'; end if;
+  return true;
+end $$;
+
+create or replace function public.ot_incidencia_crear(p_token text, p_trabajador uuid, p_descripcion text, p_ubicacion text) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; n int; d text := trim(coalesce(p_descripcion,''));
+begin
+  u := public.ot_quien(p_token);
+  if u.rol <> 'control' then raise exception 'Solo el centro de control puede crear incidencias.'; end if;
+  if not public.ot_fuera_horario() then
+    raise exception 'Las incidencias solo se pueden crear fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30).';
+  end if;
+  if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo) then
+    raise exception 'Elige a un técnico de turno activo.';
+  end if;
+  if length(d) = 0 then raise exception 'Describe lo que está pasando.'; end if;
+  insert into public.ordenes(tipo, creada_por, trabajador_id, titulo, detalle, ubicacion, prioridad)
+    values ('incidencia', u.id, p_trabajador, case when length(d) > 80 then left(d, 77) || '…' else d end, d,
+            trim(coalesce(p_ubicacion,'')), 'Urgente')
+    returning numero into n;
+  return n;
 end $$;
 
 -- ---------- plan preventivo ----------
@@ -328,7 +377,8 @@ begin
   u := public.ot_quien(p_token);
   perform public.ot_generar_plan();
   select coalesce(jsonb_agg(jsonb_build_object(
-      'id', o.id, 'numero', o.numero, 'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
+      'id', o.id, 'numero', o.numero, 'tipo', o.tipo, 'creada_por', c.nombre,
+      'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada,
       'codigo_actividad', o.codigo_actividad, 'descripcion_realizada', o.descripcion_realizada,
@@ -337,17 +387,21 @@ begin
     order by o.creada desc), '[]'::jsonb)
     into ords
     from public.ordenes o join public.usuarios t on t.id = o.trabajador_id
-   where u.rol = 'admin' or o.trabajador_id = u.id;
+    left join public.usuarios c on c.id = o.creada_por
+   where u.rol = 'admin' or (u.rol = 'control' and o.tipo = 'incidencia') or o.trabajador_id = u.id;
   if u.rol = 'admin' then
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'usuario', usuario, 'nombre', nombre, 'activo', activo,
-      'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
-      order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador';
+      'rol', rol, 'de_turno', de_turno, 'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
+      order by rol desc, nombre), '[]'::jsonb) into trabs from public.usuarios where rol in ('trabajador','control');
     select coalesce(jsonb_agg(jsonb_build_object('id', pl.id, 'fecha', pl.fecha, 'tecnico', t.nombre,
       'actividad', pl.actividad, 'cantidad', pl.cantidad, 'unidad', pl.unidad)
       order by pl.fecha, t.nombre, pl.actividad), '[]'::jsonb) into plan
       from public.plan_preventivo pl join public.usuarios t on t.id = pl.trabajador_id where pl.generada is null;
+  elsif u.rol = 'control' then
+    select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', de_turno)
+      order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador' and activo;
   end if;
-  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan);
+  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'fuera_horario', public.ot_fuera_horario());
 end $$;
 
 create or replace function public.ot_foto(p_token text, p_ot uuid) returns text
@@ -355,7 +409,8 @@ language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; f text;
 begin
   u := public.ot_quien(p_token);
-  select foto into f from public.ordenes where id = p_ot and (u.rol = 'admin' or trabajador_id = u.id);
+  select foto into f from public.ordenes
+   where id = p_ot and (u.rol = 'admin' or trabajador_id = u.id or (u.rol = 'control' and tipo = 'incidencia'));
   return f;
 end $$;
 
@@ -388,6 +443,16 @@ begin
   select * into o from public.ordenes where id = p_ot and trabajador_id = u.id;
   if not found then raise exception 'Esta orden no está asignada a ti.'; end if;
   if o.estado not in ('asignada','devuelta') then raise exception 'Esta orden ya fue enviada o cerrada.'; end if;
+  if p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000) then
+    raise exception 'La foto no es válida o es demasiado grande.';
+  end if;
+  if o.tipo = 'incidencia' then
+    -- Una incidencia no lleva código de actividad ni exige foto: el reporte del técnico la cierra.
+    if length(trim(coalesce(p_descripcion,''))) = 0 then raise exception 'Describe cómo se resolvió la incidencia.'; end if;
+    update public.ordenes set descripcion_realizada = trim(p_descripcion), foto = coalesce(p_foto, foto),
+      enviado = now(), estado = 'cerrada', cerrada = now(), nota_cierre = null where id = p_ot;
+    return;
+  end if;
   if length(trim(coalesce(p_codigo,''))) = 0 or length(trim(coalesce(p_descripcion,''))) = 0 then
     raise exception 'Completa el código de actividad y la descripción.';
   end if;
@@ -422,7 +487,10 @@ create or replace function public.ot_reabrir(p_token text, p_ot uuid) returns vo
 language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform public.ot_admin(p_token);
-  update public.ordenes set estado = 'revision', cerrada = null, nota_cierre = null
+  update public.ordenes set
+      estado = case when tipo = 'incidencia' then 'devuelta' else 'revision' end,
+      nota_devolucion = case when tipo = 'incidencia' then 'Reabierta por el administrador.' else nota_devolucion end,
+      cerrada = null, nota_cierre = null
     where id = p_ot and estado = 'cerrada';
   if not found then raise exception 'La orden no está cerrada.'; end if;
 end $$;

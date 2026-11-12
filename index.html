@@ -208,6 +208,28 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </form>
     </section>
 
+    <section class="panel" id="incidencia" hidden>
+      <h2>Nueva incidencia fuera de horario</h2>
+      <p class="nota" id="i-horario"></p>
+      <form id="form-inc" class="lista" autocomplete="off">
+        <div class="fila">
+          <label for="i-trab">Técnico de turno
+            <select id="i-trab" required></select>
+          </label>
+          <label for="i-lugar">Ubicación
+            <input id="i-lugar" maxlength="120" placeholder="Ej.: Km 80, poste SOS">
+          </label>
+        </div>
+        <label for="i-desc">Qué está pasando
+          <textarea id="i-desc" required maxlength="4000" placeholder="Describe la incidencia con el mayor detalle posible."></textarea>
+        </label>
+        <div class="acciones">
+          <button class="btn principal" id="i-enviar" type="submit" disabled>Enviar incidencia</button>
+          <span class="nota" id="i-estado"></span>
+        </div>
+      </form>
+    </section>
+
     <section class="lista" id="lista" aria-live="polite"></section>
 
     <section class="panel" id="plan" hidden>
@@ -232,11 +254,14 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
     <section class="panel" id="equipo" hidden>
       <details>
         <summary id="equipo-titulo">Equipo</summary>
-        <p class="nota">Entrega a cada técnico su usuario y una clave temporal. Al ingresar tendrá que crear su propia contraseña.</p>
+        <p class="nota">Entrega a cada persona su usuario y una clave temporal. Al ingresar tendrá que crear su propia contraseña. Marca "de turno" a los técnicos que reciben incidencias fuera de horario.</p>
         <div class="lista" id="equipo-lista" style="margin-top:10px"></div>
         <form id="form-trab" class="lista" style="margin-top:14px" autocomplete="off">
-          <h3>Agregar técnico</h3>
+          <h3>Agregar usuario</h3>
           <div class="fila">
+            <label for="t-rol">Tipo de usuario
+              <select id="t-rol"><option value="trabajador">Técnico de terreno</option><option value="control">Centro de control</option></select>
+            </label>
             <label for="t-nombre">Nombre y apellido
               <input id="t-nombre" required maxlength="60">
             </label>
@@ -248,7 +273,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
             </label>
           </div>
           <div class="acciones">
-            <button class="btn" type="submit" id="t-enviar">Agregar técnico</button>
+            <button class="btn" type="submit" id="t-enviar">Agregar usuario</button>
             <span class="nota" id="t-estado"></span>
           </div>
         </form>
@@ -279,8 +304,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=3"></script>
-<script src="calendario.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="config.js?v=4"></script>
+<script src="calendario.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
