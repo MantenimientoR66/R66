@@ -14,6 +14,7 @@
   --fondo:#f1f6f9; --panel:#ffffff; --tinta:#002d57; --tenue:#4f6478; --linea:#cfdde6;
   --acento:#01add3; --boton:#002d57; --boton-tinta:#ffffff; --campo:#f6fafc;
   --ok:#1f7a4d; --aviso:#a86400; --alerta:#b3261e; --info:#0b7fa0;
+  --serie:#2a78d6; --contexto:#c3c2b7; --pista:#cde2fb;
   --display:"Albert Sans","Segoe UI",system-ui,sans-serif;
   --cuerpo:"Albert Sans","Segoe UI",system-ui,sans-serif;
 }
@@ -22,6 +23,7 @@
     color-scheme:dark;
     --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
     --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
+    --serie:#3987e5; --contexto:#52657a; --pista:#104281;
     --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
   }
 }
@@ -29,6 +31,7 @@
   color-scheme:dark;
   --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
   --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
+    --serie:#3987e5; --contexto:#52657a; --pista:#104281;
   --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
 }
 *{box-sizing:border-box}
@@ -105,6 +108,40 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .usr{font-variant-numeric:tabular-nums;color:var(--tenue)}
 a.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
 a.btn.wa{background:var(--boton);border-color:var(--boton);color:var(--boton-tinta)}
+.nav{display:flex;flex-wrap:wrap;gap:6px;border-bottom:2px solid var(--linea);padding-bottom:8px}
+.nav button{font:600 1rem var(--cuerpo);color:var(--tenue);background:none;border:0;border-radius:4px;padding:8px 14px;cursor:pointer}
+.nav button[aria-pressed="true"]{color:var(--boton-tinta);background:var(--boton)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile{border:1px solid var(--linea);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;background:var(--campo)}
+.tile-r{font-size:.85rem;color:var(--tenue);font-weight:500}
+.tile-v{font:700 1.7rem/1.15 var(--display);color:var(--tinta)}
+.tile-d{font-size:.82rem;color:var(--tenue)}
+.tile.hero{grid-column:span 2;border-left:5px solid var(--acento)}
+.tile.hero .tile-v{font-size:3.1rem}
+@media (max-width:480px){.tile.hero{grid-column:span 1}}
+.grafico{display:flex;flex-direction:column;gap:6px}
+.g-plot{position:relative;height:170px;margin:8px 0 0 30px}
+.g-grid{position:absolute;left:0;right:0;border-top:1px solid var(--linea)}
+.g-grid.g-base{border-top-color:var(--tenue)}
+.g-grid span{position:absolute;left:-30px;top:-.65em;width:24px;text-align:right;font-size:.75rem;color:var(--tenue);font-variant-numeric:tabular-nums}
+.g-bandas{position:absolute;inset:0;display:flex;align-items:flex-end}
+.g-banda{flex:1;height:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px;min-width:0;border-radius:4px;padding:0 1px}
+details summary.mas{font:600 .95rem var(--cuerpo);color:var(--tenue)}
+.g-banda:hover,.g-banda:focus-visible{background:color-mix(in srgb, var(--serie) 9%, transparent);outline:none}
+.g-bar{flex:0 1 24px;max-width:24px;min-width:2px;border-radius:4px 4px 0 0}
+.s-real{background:var(--serie)} .s-prog{background:var(--contexto)}
+.g-x{display:flex;margin-left:30px}
+.g-x span{flex:1;min-width:0;text-align:center;font-size:.75rem;color:var(--tenue);white-space:nowrap}
+.g-ley{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:.85rem;color:var(--tenue)}
+.g-ley i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.medidores{display:flex;flex-direction:column;gap:8px}
+.medidor{display:grid;grid-template-columns:minmax(110px,170px) 1fr minmax(120px,auto);gap:10px;align-items:center}
+.med-n{font-weight:600} .med-v{font-size:.9rem;color:var(--tenue);text-align:right;font-variant-numeric:tabular-nums}
+.meter{height:8px;border-radius:99px;background:var(--pista);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:99px;background:var(--serie)}
+@media (max-width:520px){.medidor{grid-template-columns:1fr auto}.medidor .meter{grid-column:1 / -1;grid-row:2}}
+#tip{position:fixed;z-index:20;pointer-events:none;background:var(--tinta);color:var(--panel);border-radius:4px;padding:6px 10px;font-size:.82rem;display:flex;flex-direction:column;gap:1px;max-width:260px}
+#tip .tip-t{opacity:.8}
 .tabla-caja{overflow-x:auto}
 table.plan{border-collapse:collapse;width:100%;font-size:.93rem}
 table.plan td{border-top:1px solid var(--linea);padding:6px 8px 6px 0;vertical-align:top}
@@ -179,6 +216,13 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
   </section>
 
   <div id="v-app" class="lista" style="gap:18px" hidden>
+    <nav class="nav" id="nav" aria-label="Secciones del administrador" hidden>
+      <button type="button" data-v="ordenes" aria-pressed="true">Órdenes</button>
+      <button type="button" data-v="panel" id="nav-panel" aria-pressed="false">Panel</button>
+      <button type="button" data-v="plan" aria-pressed="false">Plan preventivo</button>
+      <button type="button" data-v="equipo" aria-pressed="false">Equipo y turnos</button>
+      <button type="button" data-v="ajustes" aria-pressed="false">Ajustes</button>
+    </nav>
     <div class="mensaje" id="alerta-inc" role="alert" hidden></div>
     <section class="filtros" id="filtros" aria-label="Filtrar por estado"></section>
 
@@ -243,18 +287,18 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
     <section class="lista" id="lista" aria-live="polite"></section>
 
     <section class="panel" id="reportes" hidden>
-      <details>
-        <summary id="rep-titulo">Reportes</summary>
-        <label for="r-periodo" style="max-width:260px">Período para trabajos e incidencias
-          <select id="r-periodo">
-            <option value="mes">Este mes</option>
-            <option value="semana">Esta semana</option>
-            <option value="anterior">Mes anterior</option>
-            <option value="todo">Todo</option>
-          </select>
+      <h2>Panel de mantenimiento</h2>
+      <div class="fila" style="align-items:end">
+        <label for="r-mes">Mes
+          <input id="r-mes" type="month">
         </label>
-        <div class="lista" id="r-cuerpo" style="margin-top:14px"></div>
-      </details>
+        <div class="acciones">
+          <button class="btn" type="button" id="inf-generar">Generar informe del mes con fotos</button>
+        </div>
+      </div>
+      <div class="acciones" id="inf-enlaces"></div>
+      <p class="nota" id="inf-estado"></p>
+      <div class="lista" id="r-cuerpo" style="gap:14px"></div>
     </section>
 
     <section class="panel" id="plan" hidden>
@@ -355,9 +399,10 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
+<div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=9"></script>
-<script src="calendario.js?v=9"></script>
-<script src="app.js?v=9"></script>
+<script src="config.js?v=11"></script>
+<script src="calendario.js?v=11"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

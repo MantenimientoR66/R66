@@ -35,6 +35,12 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.
 - El técnico de turno la cierra describiendo cómo se resolvió (foto opcional). El centro de control y el administrador ven ese cierre.
 
+## Panel del administrador
+
+- El administrador navega por pestañas: Órdenes, Panel, Plan preventivo, Equipo y turnos, y Ajustes.
+- El **Panel** muestra, para el mes elegido: cumplimiento preventivo, OT realizadas, horas promedio que las OT pasan abiertas, OT abiertas, incidencias atendidas, alertas, gráficos por día y por semana, y el rendimiento de cada técnico.
+- **Generar informe del mes con fotos** arma un documento con todos los trabajos del mes y sus fotos. Se abre en el navegador, desde donde se imprime o se guarda como PDF, y también se puede descargar como archivo.
+
 ## Plan preventivo
 
 - El administrador carga el calendario semanal (Excel) en la sección **Plan preventivo**. Cada celda de día con el nombre de un técnico es una asignación.
