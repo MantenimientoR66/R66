@@ -24,6 +24,39 @@ const S = {
   huella:"", huellaEquipo:"", filtro:"todas", abiertos:{}, borradores:{}, notas:{}, ocupado:{},
   confirmar:{}, errores:{}, fotos:{}, pidiendoFoto:{}, temporal:"", reloj:null
 };
+// Códigos de actividad de la bitácora de trabajos diarios (Control diario trabajos mantención).
+const ACTIVIDADES = [
+  ["", "Segregación de Obra"],
+  ["DMV 01", "Mantención Plantas de Tratamiento de Aguas Servidas"],
+  ["DMV 02", "Mantención de sistemas de abastecimiento de agua potable"],
+  ["DMV 03", "Mantención Grupos Generadores"],
+  ["DMV 04", "Mantención de Subestaciones y Empalmes"],
+  ["DMV 05", "Mantención Sistema Hidropack Edificios y Regadío"],
+  ["DMV 06", "Mantención de Iluminación Interior Edificios"],
+  ["DMV 07", "Mantención Termos Eléctricos"],
+  ["DMV 08", "Mantención de Aires Acondicionado Edificios"],
+  ["DMV 09", "Revisión Seguridad Salas Técnicas FF"],
+  ["DMV 10", "Mantención Equipamiento de Pórticos FF"],
+  ["DMV 11", "Mantención de Equipos de Salas Técnicas FF"],
+  ["DMV 12", "Mantención de Estaciones y Servidores de Datos"],
+  ["DMV 13", "Mantención de Respaldo a Bases de Datos"],
+  ["DMV 14", "Mantención de UPS de Respaldo"],
+  ["DMV 15", "Mantención Transmisión de Voz, Datos y Video"],
+  ["DMV 16", "Mantención Rack de Comunicaciones"],
+  ["DMV 17", "Mantención Cámaras de Seguridad"],
+  ["DMV 18", "Mantención de Estaciones y Servidores de Video"],
+  ["DMV 19", "Mantención de Estaciones de Conteo Vehicular"],
+  ["DMV 20", "Mantención de Iluminación Exterior de Calzadas"],
+  ["DMV 21", "Mantención de Citófonos de Emergencia (Postes SOS)"],
+  ["DMV 22", "Mantención de Letreros Dinámicos"],
+  ["DSI 01", "Mantención Sistema Alarmas SICAS"]
+].map(([c, d]) => c ? c + " · " + d : d);
+function opcionesActividad(sel, valor){
+  sel.replaceChildren(h("option", {value:""}, "Elige el código de actividad"));
+  const lista = (valor && !ACTIVIDADES.includes(valor)) ? [valor].concat(ACTIVIDADES) : ACTIVIDADES;
+  for (const a of lista) sel.append(h("option", {value:a}, a));
+  sel.value = valor || "";
+}
 const ESTADOS = {asignada:"Asignada", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
 
 function aviso(texto, bien){
@@ -51,7 +84,7 @@ async function rpc(fn, args){
     if (e.code === "OT401"){ cerrarLocal("Tu sesión venció. Vuelve a ingresar."); throw new Error("Tu sesión venció."); }
     if (e.code === "OT402"){ mostrarCambio(); throw new Error(e.message); }
     if (/fetch|network/i.test(e.message || "")) throw new Error("No hay conexión. Revisa tu internet e intenta otra vez.");
-    if (e.code && /^(PGRST|42)/.test(e.code)) throw new Error("La base de datos no está preparada. Falta ejecutar el archivo supabase.sql en Supabase.");
+    if (e.code && /^(PGRST|42)/.test(e.code)) throw new Error("La base de datos no está al día. Ejecuta de nuevo el archivo supabase.sql en el SQL Editor de Supabase.");
     throw new Error(e.message || "No se pudo completar la operación.");
   }
   return res.data;
@@ -237,6 +270,7 @@ function tarjeta(o){
   if (!abierto) return card;
 
   const cuerpo = h("div", {class:"ot-cuerpo"});
+  if (o.actividad) cuerpo.append(bloque("Código de actividad", h("p", {class:"cod"}, o.actividad)));
   cuerpo.append(bloque("Detalle del trabajo", h("p", null, o.detalle)));
   cuerpo.append(h("p", {class:"nota"}, "Asignada el " + fecha(o.creada)));
   if (estado === "devuelta" && o.nota_devolucion)
@@ -245,7 +279,7 @@ function tarjeta(o){
   const editable = !S.admin && (estado === "asignada" || estado === "devuelta");
   if (o.enviado && !editable){
     cuerpo.append(h("div", {class:"lista"},
-      bloque("Código de actividad", h("p", {class:"cod"}, o.codigo_actividad || "—")),
+      bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
       bloque("Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
       bloque("Foto", imagen(o)),
       h("p", {class:"nota"}, "Reporte enviado el " + fecha(o.enviado))));
@@ -264,14 +298,14 @@ function tarjeta(o){
 
 function formReporte(o){
   const id = o.id;
-  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null});
+  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null});
   const ocupado = !!S.ocupado[id];
   const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o) : null;
+  const selCod = h("select", {id:"cod-"+id, required:true, onchange: ev => { b.codigo = ev.target.value; }});
+  opcionesActividad(selCod, b.codigo);
   return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarReporte(o); }},
     h("span", {class:"bloque"}, h("span", {class:"rot"}, "Tu reporte")),
-    h("label", {for:"cod-"+id}, "Código de actividad",
-      h("input", {id:"cod-"+id, required:true, maxlength:"40", value:b.codigo, placeholder:"Ej.: M-204",
-        oninput: ev => { b.codigo = ev.target.value; }})),
+    h("label", {for:"cod-"+id}, "Código de actividad realizado", selCod),
     h("label", {for:"des-"+id}, "Descripción del trabajo realizado",
       h("textarea", {id:"des-"+id, required:true, maxlength:"4000", value:b.descripcion,
         oninput: ev => { b.descripcion = ev.target.value; }})),
@@ -433,18 +467,22 @@ $("form-nueva").addEventListener("submit", async ev => {
   ev.preventDefault();
   const wid = $("n-trab").value, btn = $("n-enviar"), est = $("n-estado");
   if (!wid){ est.textContent = "Elige un técnico."; return; }
+  const act = $("n-act").value;
+  if (!act){ est.textContent = "Elige el código de actividad."; return; }
   btn.disabled = true; est.textContent = "Guardando…";
   try {
-    const n = await rpc("ot_crear", {p_token:S.token, p_trabajador:wid, p_titulo:$("n-titulo").value, p_detalle:$("n-detalle").value,
+    const n = await rpc("ot_crear", {p_token:S.token, p_trabajador:wid, p_actividad:act, p_titulo:$("n-titulo").value, p_detalle:$("n-detalle").value,
       p_ubicacion:$("n-lugar").value, p_prioridad:$("n-prio").value, p_fecha:$("n-fecha").value || null});
     const t = S.trabajadores.find(x => x.id === wid);
     est.textContent = numTxt(n) + " asignada" + (t ? " a " + t.nombre : "") + ".";
     for (const k of ["n-titulo","n-detalle","n-lugar","n-fecha"]) $(k).value = "";
-    $("n-prio").value = "Normal";
+    $("n-prio").value = "Normal"; $("n-act").value = "";
     await cargar();
   } catch (e){ est.textContent = e.message; }
   btn.disabled = false;
 });
+
+opcionesActividad($("n-act"), "");
 
 /* ---------- inicio ---------- */
 async function iniciar(){

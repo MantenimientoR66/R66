@@ -46,6 +46,7 @@ create table if not exists public.ordenes (
 
 alter table public.usuarios alter column clave drop not null;
 alter table public.usuarios add column if not exists debe_cambiar boolean not null default false;
+alter table public.ordenes add column if not exists actividad text; -- código de actividad que asigna el administrador
 
 -- Cuentas iniciales, sin contraseña. El administrador crea la suya al entrar por primera vez
 -- y entrega a cada técnico una clave temporal desde su panel.
@@ -243,7 +244,7 @@ begin
   u := public.ot_quien(p_token);
   select coalesce(jsonb_agg(jsonb_build_object(
       'id', o.id, 'numero', o.numero, 'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
-      'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
+      'actividad', o.actividad, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada,
       'codigo_actividad', o.codigo_actividad, 'descripcion_realizada', o.descripcion_realizada,
       'tiene_foto', o.foto is not null, 'enviado', o.enviado,
@@ -269,7 +270,8 @@ begin
   return f;
 end $$;
 
-create or replace function public.ot_crear(p_token text, p_trabajador uuid, p_titulo text, p_detalle text,
+drop function if exists public.ot_crear(text, uuid, text, text, text, text, date);
+create or replace function public.ot_crear(p_token text, p_trabajador uuid, p_actividad text, p_titulo text, p_detalle text,
   p_ubicacion text, p_prioridad text, p_fecha date) returns int
 language plpgsql security definer set search_path = public, extensions as $$
 declare n int;
@@ -278,11 +280,12 @@ begin
   if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo) then
     raise exception 'Elige un trabajador activo.';
   end if;
+  if length(trim(coalesce(p_actividad,''))) = 0 then raise exception 'Elige el código de actividad.'; end if;
   if length(trim(coalesce(p_titulo,''))) = 0 or length(trim(coalesce(p_detalle,''))) = 0 then
     raise exception 'Completa el título y el detalle del trabajo.';
   end if;
-  insert into public.ordenes(trabajador_id, titulo, detalle, ubicacion, prioridad, fecha_limite)
-    values (p_trabajador, trim(p_titulo), trim(p_detalle), trim(coalesce(p_ubicacion,'')),
+  insert into public.ordenes(trabajador_id, actividad, titulo, detalle, ubicacion, prioridad, fecha_limite)
+    values (p_trabajador, trim(p_actividad), trim(p_titulo), trim(p_detalle), trim(coalesce(p_ubicacion,'')),
             case when p_prioridad in ('Normal','Alta','Urgente') then p_prioridad else 'Normal' end, p_fecha)
     returning numero into n;
   return n;
