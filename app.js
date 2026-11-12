@@ -92,7 +92,7 @@ async function rpc(fn, args){
 
 /* ---------- acceso ---------- */
 function cerrarLocal(msg){
-  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaInc = ""; S.huellaFer = ""; S.importar = null;
+  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaRep = null; S.huellaInc = ""; S.huellaFer = ""; S.importar = null;
   S.fotos = {}; S.borradores = {}; S.temporal = "";
   $("rol").textContent = "";
   vista("v-login");
@@ -113,7 +113,7 @@ function abrirApp(){
   S.admin = S.yo.rol === "admin"; S.control = S.yo.rol === "control"; S.temporal = "";
   $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : S.control ? " · Centro de control" : " · Técnico");
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
-  $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin;
+  $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin; $("reportes").hidden = !S.admin;
   aviso("");
   vista("v-app"); render(); cargar();
   S.reloj = setInterval(cargar, 30000);
@@ -183,7 +183,9 @@ async function cargar(){
     S.fuera = !!d.fuera_horario;
     const hi = he + "|" + S.fuera;
     if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
+    const cambioRep = hu !== S.huella || hp !== S.huellaRep;
     if (hu !== S.huella){ S.huella = hu; render(); }
+    if (cambioRep){ S.huellaRep = hp; renderReportes(); }
     if ($("aviso").textContent.startsWith("No hay conexión")) aviso("");
   } catch (e){ if (S.token && !$("v-app").hidden) aviso(e.message); }
   cargando = false;
@@ -528,6 +530,113 @@ $("form-inc").addEventListener("submit", async ev => {
   } catch (e){ est.textContent = e.message; }
   $("i-enviar").disabled = !S.fuera;
 });
+
+/* ---------- reportes (administrador) ---------- */
+function isoLocal(v){
+  if (!v) return "";
+  const d = new Date(v), p = n => String(n).padStart(2,"0");
+  return isNaN(d) ? "" : d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+function sumarIso(iso, n){ const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0,10); }
+function lunesDe(iso){ const d = new Date(iso + "T12:00:00Z"); return sumarIso(iso, -((d.getUTCDay() + 6) % 7)); }
+function semanaIso(iso){
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3);            // jueves de esa semana
+  const ene4 = new Date(Date.UTC(d.getUTCFullYear(), 0, 4, 12));
+  return 1 + Math.round(((d - ene4) / 86400000 - 3 + ((ene4.getUTCDay() + 6) % 7)) / 7);
+}
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+function mesTxt(clave){ return MESES[Number(clave.slice(5,7)) - 1] + " " + clave.slice(0,4); }
+function hecha(o){ return o.tipo === "incidencia" ? o.estado === "cerrada" : (o.estado === "revision" || o.estado === "cerrada"); }
+function fechaHecha(o){ return isoLocal(o.tipo === "incidencia" ? o.cerrada : o.enviado); }
+function pct(h, p){ return p ? Math.round(100 * h / p) + " %" : "—"; }
+function rangoPeriodo(){
+  const hoy = hoyIso(), v = $("r-periodo").value;
+  if (v === "semana"){ const l = lunesDe(hoy); return [l, sumarIso(l, 6)]; }
+  if (v === "mes") return [hoy.slice(0,8) + "01", hoy.slice(0,8) + "31"];
+  if (v === "anterior"){ const f = sumarIso(hoy.slice(0,8) + "01", -1); return [f.slice(0,8) + "01", f.slice(0,8) + "31"]; }
+  return ["0000-00-00", "9999-99-99"];
+}
+function tabla(cabeceras, filas, vacio){
+  if (!filas.length) return h("p", {class:"nota"}, vacio);
+  return h("div", {class:"tabla-caja"}, h("table", {class:"rep"},
+    h("thead", null, h("tr", null, cabeceras.map((c, i) => h("th", {class: i ? "num-cel" : null, scope:"col"}, c)))),
+    h("tbody", null, filas.map(f => h("tr", null, f.map((c, i) => h("td", {class: i ? "num-cel" : null}, c)))))));
+}
+// Preventivos programados: las OT que ya generó el plan más lo que aún falta por generar.
+function preventivos(){
+  const out = S.ordenes.filter(o => o.origen === "plan" && o.fecha_limite)
+    .map(o => ({fecha:o.fecha_limite, tecnico:o.trabajador, hecha:hecha(o)}));
+  for (const p of S.plan) out.push({fecha:p.fecha, tecnico:p.tecnico, hecha:false});
+  return out;
+}
+function renderReportes(){
+  if (!S.admin) return;
+  const hoy = hoyIso(), caja = $("r-cuerpo"); caja.replaceChildren();
+
+  // 1. Alertas: lo que venció sin que el técnico lo realizara.
+  const alertas = [];
+  for (const o of S.ordenes){
+    if (o.tipo === "incidencia"){
+      if (o.estado !== "cerrada" && Date.now() - new Date(o.creada) > 24 * 3600 * 1000)
+        alertas.push([isoLocal(o.creada), o.trabajador + " no ha cerrado la incidencia INC-" + String(o.numero).padStart(4,"0") + ", informada el " + fecha(o.creada) + "."]);
+    } else if (o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
+      alertas.push([o.fecha_limite, o.trabajador + " no realizó " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + "), programada para el " + diaTxt(o.fecha_limite).toLowerCase() +
+        (o.estado === "devuelta" ? ". Está devuelta para corregir." : ".")]);
+    }
+  }
+  alertas.sort((x, y) => x[0] < y[0] ? 1 : -1);
+  $("rep-titulo").textContent = "Reportes" + (alertas.length ? " (" + alertas.length + (alertas.length === 1 ? " alerta)" : " alertas)") : "");
+  caja.append(h("h3", null, "Alertas"));
+  if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar ni incidencias abiertas hace más de 24 horas."));
+  else caja.append(h("div", {class:"lista"}, alertas.map(al => h("p", {class:"mensaje"}, al[1]))));
+
+  // 2. Trabajos e incidencias por técnico en el período elegido.
+  const [desde, hasta] = rangoPeriodo();
+  const enPeriodo = o => { const f = fechaHecha(o); return hecha(o) && f >= desde && f <= hasta; };
+  const tecnicos = [...new Set(S.trabajadores.filter(t => t.rol !== "control").map(t => t.nombre).concat(S.ordenes.map(o => o.trabajador)))].sort();
+  caja.append(h("h3", null, "Trabajos realizados por técnico"));
+  caja.append(tabla(["Técnico", "OT realizadas", "De ellas, preventivas", "Incidencias atendidas"], tecnicos.map(t => {
+    const mias = S.ordenes.filter(o => o.trabajador === t && enPeriodo(o));
+    return [t, mias.filter(o => o.tipo !== "incidencia").length, mias.filter(o => o.origen === "plan").length, mias.filter(o => o.tipo === "incidencia").length];
+  }), "Todavía no hay técnicos."));
+
+  // 3. Incidencias por centro de control (según la fecha en que se informaron).
+  const incs = S.ordenes.filter(o => o.tipo === "incidencia" && isoLocal(o.creada) >= desde && isoLocal(o.creada) <= hasta);
+  const centros = [...new Set(incs.map(o => o.creada_por || "Sin nombre"))].sort();
+  caja.append(h("h3", null, "Incidencias por centro de control"));
+  caja.append(tabla(["Centro de control", "Informadas", "Atendidas", "Abiertas"], centros.map(c => {
+    const m = incs.filter(o => (o.creada_por || "Sin nombre") === c), at = m.filter(hecha).length;
+    return [c, m.length, at, m.length - at];
+  }), "No hay incidencias en este período."));
+
+  // 4. Cumplimiento del plan preventivo, por semana y por mes (hasta hoy).
+  const prev = preventivos();
+  const agrupar = (clave, rotulo) => {
+    const g = {};
+    for (const p of prev){ const k = clave(p.fecha); (g[k] = g[k] || {p:0, h:0}); g[k].p++; if (p.hecha) g[k].h++; }
+    return Object.keys(g).filter(k => k <= clave(hoy)).sort().reverse().slice(0, 8)
+      .map(k => [rotulo(k), g[k].p, g[k].h, g[k].p - g[k].h, pct(g[k].h, g[k].p)]);
+  };
+  caja.append(h("h3", null, "Cumplimiento preventivo semanal"));
+  caja.append(tabla(["Semana", "Programados", "Realizados", "Pendientes", "Cumplimiento"],
+    agrupar(lunesDe, k => "Semana " + semanaIso(k) + " (" + fechaCorta(k) + " al " + fechaCorta(sumarIso(k, 6)) + ")"),
+    "Todavía no hay trabajos preventivos programados hasta esta semana."));
+  caja.append(h("h3", null, "Cumplimiento preventivo mensual"));
+  caja.append(tabla(["Mes", "Programados", "Realizados", "Pendientes", "Cumplimiento"],
+    agrupar(f => f.slice(0,7), mesTxt), "Todavía no hay trabajos preventivos programados hasta este mes."));
+
+  // 5. Cumplimiento por técnico: semana y mes en curso.
+  const lun = lunesDe(hoy), mes = hoy.slice(0,7);
+  const cuenta = (t, f) => { const m = prev.filter(p => p.tecnico === t && f(p.fecha)); const hh = m.filter(p => p.hecha).length; return m.length ? hh + " de " + m.length + " (" + pct(hh, m.length) + ")" : "—"; };
+  const conPrev = tecnicos.filter(t => prev.some(p => p.tecnico === t));
+  caja.append(h("h3", null, "Cumplimiento preventivo por técnico"));
+  caja.append(tabla(["Técnico", "Semana " + semanaIso(hoy), mesTxt(mes)],
+    conPrev.map(t => [t, cuenta(t, f => lunesDe(f) === lun), cuenta(t, f => f.slice(0,7) === mes)]),
+    "Ningún técnico tiene trabajos preventivos programados."));
+  caja.append(h("p", {class:"nota"}, "Un trabajo cuenta como realizado cuando el técnico envió su reporte, aunque todavía no lo hayas cerrado. La semana y el mes en curso incluyen lo programado para los días que faltan."));
+}
+$("r-periodo").addEventListener("change", renderReportes);
 
 /* ---------- feriados ---------- */
 function renderFeriados(){

@@ -104,6 +104,10 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .tabla-caja{overflow-x:auto}
 table.plan{border-collapse:collapse;width:100%;font-size:.93rem}
 table.plan td{border-top:1px solid var(--linea);padding:6px 8px 6px 0;vertical-align:top}
+table.rep{border-collapse:collapse;width:100%;font-size:.93rem}
+table.rep th{text-align:left;font-weight:600;color:var(--tenue);border-bottom:2px solid var(--linea);padding:6px 10px 6px 0;vertical-align:bottom}
+table.rep td{border-top:1px solid var(--linea);padding:6px 10px 6px 0;vertical-align:top}
+table.rep th.num-cel,table.rep td.num-cel{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 table.plan td:first-child{white-space:nowrap;font-weight:600}
 table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 </style>
@@ -232,6 +236,21 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
     <section class="lista" id="lista" aria-live="polite"></section>
 
+    <section class="panel" id="reportes" hidden>
+      <details>
+        <summary id="rep-titulo">Reportes</summary>
+        <label for="r-periodo" style="max-width:260px">Período para trabajos e incidencias
+          <select id="r-periodo">
+            <option value="mes">Este mes</option>
+            <option value="semana">Esta semana</option>
+            <option value="anterior">Mes anterior</option>
+            <option value="todo">Todo</option>
+          </select>
+        </label>
+        <div class="lista" id="r-cuerpo" style="margin-top:14px"></div>
+      </details>
+    </section>
+
     <section class="panel" id="plan" hidden>
       <details>
         <summary id="plan-titulo">Plan preventivo</summary>
@@ -327,8 +346,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=5"></script>
-<script src="calendario.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="config.js?v=6"></script>
+<script src="calendario.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
