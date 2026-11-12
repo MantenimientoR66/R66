@@ -58,7 +58,7 @@ alter table public.ordenes add column if not exists creada_por uuid references p
 alter table public.ordenes add column if not exists actividad text; -- código de actividad que asigna el administrador
 alter table public.ordenes add column if not exists cantidad numeric; -- cantidad programada para ese día
 alter table public.ordenes add column if not exists unidad text;
-alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual' o 'plan'
+alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual', 'plan' o 'ronda'
 
 -- Ajustes generales. 'turno_ancla' es el viernes en que parte la rotación con el primer técnico.
 create table if not exists public.ajustes (
@@ -115,6 +115,25 @@ begin
     revoke all on public.plan_preventivo from anon, authenticated;
   end if;
 end $$;
+
+-- Ronda de luminarias: una OT automática por día para el técnico de turno de emergencia.
+-- Esta tabla recuerda qué días ya tienen su ronda, para no repetirla.
+create table if not exists public.rondas (
+  fecha date primary key,
+  orden_id uuid references public.ordenes(id) on delete set null,
+  generada timestamptz not null default now()
+);
+alter table public.rondas enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.rondas from anon, authenticated;
+  end if;
+end $$;
+-- Las rondas se generan desde el momento en que se instala esta función (no se crean rondas de días pasados).
+insert into public.ajustes(clave, valor)
+  values ('ronda_desde', to_char(now() at time zone 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS'))
+  on conflict (clave) do nothing;
 
 -- Cuentas iniciales, sin contraseña. El administrador crea la suya al entrar por primera vez
 -- y entrega a cada técnico una clave temporal desde su panel.
@@ -439,6 +458,41 @@ begin
   delete from public.feriados where fecha = p_fecha;
 end $$;
 
+-- ---------- ronda de luminarias ----------
+
+-- Crea la OT "Ronda de luminarias" para el técnico de turno de emergencia, una por día (hora de Chile):
+--   lunes a jueves a las 18:30 y viernes a las 14:30 (hora de salida del horario laboral);
+--   sábados, domingos y feriados a las 8:30.
+-- Se ejecuta sola cada vez que alguien abre o actualiza la página y, si el proyecto tiene pg_cron, cada 5 minutos.
+create or replace function public.ot_generar_rondas() returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare ahora timestamp := now() at time zone 'America/Santiago'; desde timestamp; d date; momento timestamp;
+  libre boolean; tec uuid; oid uuid; c int; n int := 0;
+begin
+  select valor::timestamp into desde from public.ajustes where clave = 'ronda_desde';
+  if desde is null then return 0; end if;
+  for d in select g::date from generate_series(greatest(desde::date, ahora::date - 7)::timestamp, ahora::date::timestamp, interval '1 day') g loop
+    libre := extract(isodow from d) >= 6 or exists (select 1 from public.feriados where fecha = d);
+    momento := d + case when libre then time '08:30' when extract(isodow from d) = 5 then time '14:30' else time '18:30' end;
+    continue when momento > ahora or momento < desde;
+    continue when exists (select 1 from public.rondas where fecha = d);
+    tec := public.ot_turno_de(public.ot_turno_inicio(momento));   -- quien estaba de turno a esa hora
+    continue when tec is null;
+    insert into public.rondas(fecha) values (d) on conflict (fecha) do nothing;
+    get diagnostics c = row_count;
+    continue when c = 0;
+    insert into public.ordenes(trabajador_id, titulo, detalle, prioridad, fecha_limite, origen)
+      values (tec, 'Ronda de luminarias',
+        'Ronda de luminarias a cargo del técnico de turno de emergencia. Generada automáticamente el ' ||
+        to_char(momento, 'DD-MM-YYYY') || ' a las ' || to_char(momento, 'HH24:MI') || '.',
+        'Normal', d, 'ronda')
+      returning id into oid;
+    update public.rondas set orden_id = oid where fecha = d;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
 -- ---------- plan preventivo ----------
 
 -- Convierte en órdenes de trabajo las filas del plan cuya fecha ya llegó (hora de Chile).
@@ -508,6 +562,7 @@ declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb :=
 begin
   u := public.ot_quien(p_token);
   perform public.ot_generar_plan();
+  perform public.ot_generar_rondas();
   select coalesce(jsonb_agg(jsonb_build_object(
       'id', o.id, 'numero', o.numero, 'tipo', o.tipo, 'creada_por', c.nombre,
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
@@ -643,7 +698,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
+declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
@@ -657,6 +712,17 @@ begin
       end if;
     end if;
   end loop;
+end $$;
+
+-- ---------- generación a la hora exacta (opcional) ----------
+-- Con pg_cron la ronda de luminarias y el plan preventivo se generan aunque nadie tenga la página abierta.
+-- Si el proyecto no permite pg_cron, no pasa nada: se generan al abrir la página.
+do $$
+begin
+  create extension if not exists pg_cron;
+  perform cron.schedule('ot-generar', '*/5 * * * *', 'select public.ot_generar_rondas(), public.ot_generar_plan()');
+exception when others then
+  raise notice 'pg_cron no está disponible (%): las OT automáticas se generan al abrir la página.', sqlerrm;
 end $$;
 
 -- ---------- plan preventivo inicial: semanas 47 y 48 (16 al 27 de noviembre de 2026) ----------

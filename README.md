@@ -35,6 +35,13 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.
 - El técnico de turno la cierra describiendo cómo se resolvió (foto opcional). El centro de control y el administrador ven ese cierre.
 
+## Ronda de luminarias
+
+- El técnico de turno de emergencia recibe sola una OT llamada **Ronda de luminarias**, una por día: de lunes a jueves a las 18:30 y el viernes a las 14:30 (hora de salida), y los sábados, domingos y feriados a las 8:30.
+- Se asigna a quien está de turno a esa hora según la rotación, con fecha límite ese mismo día. El técnico la informa como cualquier OT (código de actividad, descripción y foto) y el administrador la cierra.
+- Si el proyecto de Supabase permite `pg_cron`, se genera a la hora exacta; si no, la primera vez que alguien abre la página después de esa hora.
+- Si el administrador elimina la ronda de un día, no se vuelve a crear ese día.
+
 ## Panel del administrador
 
 - El administrador navega por pestañas: Órdenes, Panel, Plan preventivo, Equipo y turnos, y Ajustes.

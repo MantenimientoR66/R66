@@ -323,6 +323,7 @@ function tarjeta(o){
     inc ? h("span", null, "Incidencia fuera de horario") : null,
     o.ubicacion ? h("span", null, o.ubicacion) : null,
     o.origen === "plan" ? h("span", null, "Preventivo") : null,
+    o.origen === "ronda" ? h("span", null, "Ronda automática de turno") : null,
     !inc && o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
@@ -842,7 +843,7 @@ async function generarInforme(){
       return '<section class="trabajo"><h3>' + esc(numero(o)) + " · " + esc(inc ? "Incidencia fuera de horario" : (o.actividad || o.titulo)) + ' <span class="est' + (hecha(o) ? "" : " no") + '">' + esc(estadoTxt(o)) + "</span></h3><table>" +
         fila("Técnico", o.trabajador) + fila(inc ? "Informada por" : "", inc ? o.creada_por : "") + fila("Trabajo", inc ? "" : o.titulo) +
         fila(inc ? "Informada el" : "Asignada el", fecha(o.creada)) + fila("Fecha programada", o.fecha_limite ? fechaCorta(o.fecha_limite) : "") +
-        fila("Origen", o.origen === "plan" ? "Plan preventivo" : "") + fila("Cantidad programada", o.cantidad != null ? cantTxt(o.cantidad) + " " + (o.unidad || "UN") : "") +
+        fila("Origen", o.origen === "plan" ? "Plan preventivo" : o.origen === "ronda" ? "Ronda automática del turno de emergencia" : "") + fila("Cantidad programada", o.cantidad != null ? cantTxt(o.cantidad) + " " + (o.unidad || "UN") : "") +
         fila("Ubicación", o.ubicacion) + fila(inc ? "Qué pasó" : "Detalle", o.detalle) +
         fila("Código informado", inc ? "" : o.codigo_actividad) + fila(inc ? "Cómo se resolvió" : "Trabajo realizado", o.descripcion_realizada) +
         fila(inc ? "Cerrada el" : "Reporte enviado el", o.enviado ? fecha(o.enviado) : "") + fila(inc ? "" : "Cerrada el", !inc && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de cierre", o.nota_cierre) +
