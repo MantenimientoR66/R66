@@ -101,6 +101,11 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .trab-cab{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:space-between;align-items:baseline}
 .trab-cab b{overflow-wrap:anywhere}
 .usr{font-variant-numeric:tabular-nums;color:var(--tenue)}
+.tabla-caja{overflow-x:auto}
+table.plan{border-collapse:collapse;width:100%;font-size:.93rem}
+table.plan td{border-top:1px solid var(--linea);padding:6px 8px 6px 0;vertical-align:top}
+table.plan td:first-child{white-space:nowrap;font-weight:600}
+table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -205,6 +210,25 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 
     <section class="lista" id="lista" aria-live="polite"></section>
 
+    <section class="panel" id="plan" hidden>
+      <details>
+        <summary id="plan-titulo">Plan preventivo</summary>
+        <p class="nota">Cada actividad programada se convierte sola en una orden de trabajo para su técnico el día que corresponde.</p>
+        <div id="plan-lista" style="margin-top:10px"></div>
+        <div class="lista" style="margin-top:14px">
+          <h3>Cargar calendario semanal</h3>
+          <label for="p-archivo">Archivo Excel del calendario (.xlsx)
+            <input id="p-archivo" type="file" accept=".xlsx">
+          </label>
+          <div id="p-vista" class="lista"></div>
+          <div class="acciones">
+            <button class="btn principal" type="button" id="p-cargar" hidden>Cargar al plan</button>
+            <span class="nota" id="p-estado"></span>
+          </div>
+        </div>
+      </details>
+    </section>
+
     <section class="panel" id="equipo" hidden>
       <details>
         <summary id="equipo-titulo">Equipo</summary>
@@ -254,7 +278,9 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
-<script src="config.js?v=2"></script>
-<script src="app.js?v=2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="config.js?v=3"></script>
+<script src="calendario.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

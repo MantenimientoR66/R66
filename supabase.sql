@@ -47,6 +47,31 @@ create table if not exists public.ordenes (
 alter table public.usuarios alter column clave drop not null;
 alter table public.usuarios add column if not exists debe_cambiar boolean not null default false;
 alter table public.ordenes add column if not exists actividad text; -- código de actividad que asigna el administrador
+alter table public.ordenes add column if not exists cantidad numeric; -- cantidad programada para ese día
+alter table public.ordenes add column if not exists unidad text;
+alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual' o 'plan'
+
+-- Plan de mantenimiento preventivo: una fila por día, técnico y actividad.
+-- Cuando llega la fecha, la fila se convierte sola en una orden de trabajo.
+create table if not exists public.plan_preventivo (
+  id uuid primary key default gen_random_uuid(),
+  fecha date not null,
+  trabajador_id uuid not null references public.usuarios(id),
+  actividad text not null,
+  titulo text not null,
+  cantidad numeric not null check (cantidad > 0),
+  unidad text not null default 'UN',
+  generada timestamptz,
+  creado timestamptz not null default now(),
+  unique (fecha, trabajador_id, actividad)
+);
+alter table public.plan_preventivo enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.plan_preventivo from anon, authenticated;
+  end if;
+end $$;
 
 -- Cuentas iniciales, sin contraseña. El administrador crea la suya al entrar por primera vez
 -- y entrega a cada técnico una clave temporal desde su panel.
@@ -235,16 +260,76 @@ begin
   if not p_activo then delete from public.sesiones where usuario_id = p_id; end if;
 end $$;
 
+-- ---------- plan preventivo ----------
+
+-- Convierte en órdenes de trabajo las filas del plan cuya fecha ya llegó (hora de Chile).
+-- Se ejecuta sola cada vez que alguien abre o actualiza la página.
+create or replace function public.ot_generar_plan() returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare p record; n int := 0; hoy date := (now() at time zone 'America/Santiago')::date; cant text;
+begin
+  for p in select pl.* from public.plan_preventivo pl join public.usuarios u on u.id = pl.trabajador_id
+            where pl.generada is null and pl.fecha <= hoy and u.activo
+            order by pl.fecha, pl.actividad
+            for update of pl skip locked loop
+    cant := case when p.cantidad = trunc(p.cantidad) then trunc(p.cantidad)::bigint::text else p.cantidad::text end;
+    insert into public.ordenes(trabajador_id, actividad, titulo, detalle, prioridad, fecha_limite, cantidad, unidad, origen)
+      values (p.trabajador_id, p.actividad, p.titulo,
+        'Mantenimiento preventivo programado, semana ' || to_char(p.fecha, 'IW') ||
+        '. Cantidad programada para este día: ' || cant || ' ' || p.unidad || '.',
+        'Normal', p.fecha, p.cantidad, p.unidad, 'plan');
+    update public.plan_preventivo set generada = now() where id = p.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+create or replace function public.ot_plan_cargar(p_token text, p_filas jsonb) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare f jsonb; n int := 0;
+begin
+  perform public.ot_admin(p_token);
+  if jsonb_typeof(p_filas) <> 'array' or jsonb_array_length(p_filas) = 0 then raise exception 'El calendario no trae actividades.'; end if;
+  if jsonb_array_length(p_filas) > 1000 then raise exception 'El calendario trae demasiadas filas. Cárgalo por partes.'; end if;
+  for f in select * from jsonb_array_elements(p_filas) loop
+    if not exists (select 1 from public.usuarios where id = (f->>'trabajador_id')::uuid and rol = 'trabajador') then
+      raise exception 'El calendario nombra a un técnico que no existe en Equipo.';
+    end if;
+    if coalesce((f->>'cantidad')::numeric, 0) <= 0 or length(trim(coalesce(f->>'actividad',''))) = 0 then
+      raise exception 'Hay una fila del calendario sin actividad o sin cantidad.';
+    end if;
+    insert into public.plan_preventivo(fecha, trabajador_id, actividad, titulo, cantidad, unidad)
+      values ((f->>'fecha')::date, (f->>'trabajador_id')::uuid, trim(f->>'actividad'),
+              coalesce(nullif(trim(f->>'titulo'),''), trim(f->>'actividad')), (f->>'cantidad')::numeric,
+              coalesce(nullif(trim(f->>'unidad'),''), 'UN'))
+      on conflict (fecha, trabajador_id, actividad) do update
+        set cantidad = excluded.cantidad, titulo = excluded.titulo, unidad = excluded.unidad
+        where public.plan_preventivo.generada is null;
+    n := n + 1;
+  end loop;
+  perform public.ot_generar_plan();
+  return n;
+end $$;
+
+create or replace function public.ot_plan_eliminar(p_token text, p_id uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  delete from public.plan_preventivo where id = p_id and generada is null;
+  if not found then raise exception 'Esa actividad ya se convirtió en orden de trabajo o no existe.'; end if;
+end $$;
+
 -- ---------- órdenes ----------
 
 create or replace function public.ot_listar(p_token text) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
-declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb;
+declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb := '[]'::jsonb;
 begin
   u := public.ot_quien(p_token);
+  perform public.ot_generar_plan();
   select coalesce(jsonb_agg(jsonb_build_object(
       'id', o.id, 'numero', o.numero, 'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
-      'actividad', o.actividad, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
+      'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada,
       'codigo_actividad', o.codigo_actividad, 'descripcion_realizada', o.descripcion_realizada,
       'tiene_foto', o.foto is not null, 'enviado', o.enviado,
@@ -257,8 +342,12 @@ begin
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'usuario', usuario, 'nombre', nombre, 'activo', activo,
       'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
       order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador';
+    select coalesce(jsonb_agg(jsonb_build_object('id', pl.id, 'fecha', pl.fecha, 'tecnico', t.nombre,
+      'actividad', pl.actividad, 'cantidad', pl.cantidad, 'unidad', pl.unidad)
+      order by pl.fecha, t.nombre, pl.actividad), '[]'::jsonb) into plan
+      from public.plan_preventivo pl join public.usuarios t on t.id = pl.trabajador_id where pl.generada is null;
   end if;
-  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs);
+  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan);
 end $$;
 
 create or replace function public.ot_foto(p_token text, p_ot uuid) returns text
@@ -347,7 +436,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar'];
+declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
@@ -362,3 +451,67 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ---------- plan preventivo inicial: semanas 47 y 48 (16 al 27 de noviembre de 2026) ----------
+-- La cantidad programada de cada actividad se repartió en partes enteras entre los días asignados.
+insert into public.plan_preventivo(fecha, trabajador_id, actividad, titulo, cantidad)
+select v.fecha::date, u.id, v.actividad, v.titulo, v.cantidad
+  from (values
+  ('2026-11-16', 'luis.jimenez', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-17', 'luis.jimenez', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-18', 'luis.jimenez', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-19', 'luis.jimenez', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-20', 'luis.jimenez', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-16', 'ricardo.diaz', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 3),
+  ('2026-11-17', 'ricardo.diaz', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 3),
+  ('2026-11-18', 'ricardo.diaz', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-19', 'ricardo.diaz', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-20', 'ricardo.diaz', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-17', 'manuel.pacheco', 'DMV 06 · Mantención de Iluminación Interior Edificios', 'Mantención de Iluminación Interior Edificios', 1),
+  ('2026-11-18', 'manuel.pacheco', 'DMV 06 · Mantención de Iluminación Interior Edificios', 'Mantención de Iluminación Interior Edificios', 1),
+  ('2026-11-19', 'ricardo.diaz', 'DMV 18 · Mantención de Estaciones y Servidores de Video', 'Mantención de Estaciones y Servidores de Video', 1),
+  ('2026-11-16', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-17', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-18', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-19', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-16', 'ricardo.diaz', 'DMV 20 · Mantención de Iluminación Exterior de Calzadas', 'Mantención de Iluminación Exterior de Calzadas', 4),
+  ('2026-11-17', 'ricardo.diaz', 'DMV 20 · Mantención de Iluminación Exterior de Calzadas', 'Mantención de Iluminación Exterior de Calzadas', 3),
+  ('2026-11-18', 'ricardo.diaz', 'DMV 20 · Mantención de Iluminación Exterior de Calzadas', 'Mantención de Iluminación Exterior de Calzadas', 3),
+  ('2026-11-19', 'ricardo.diaz', 'DMV 20 · Mantención de Iluminación Exterior de Calzadas', 'Mantención de Iluminación Exterior de Calzadas', 3),
+  ('2026-11-20', 'ricardo.diaz', 'DMV 20 · Mantención de Iluminación Exterior de Calzadas', 'Mantención de Iluminación Exterior de Calzadas', 3),
+  ('2026-11-16', 'manuel.pacheco', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 2),
+  ('2026-11-17', 'manuel.pacheco', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 2),
+  ('2026-11-18', 'manuel.pacheco', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 1),
+  ('2026-11-19', 'manuel.pacheco', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 1),
+  ('2026-11-20', 'manuel.pacheco', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 1),
+  ('2026-11-17', 'luis.jimenez', 'DMV 22 · Mantención de Letreros Dinámicos', 'Mantención de Letreros Dinámicos', 1),
+  ('2026-11-18', 'luis.jimenez', 'DMV 22 · Mantención de Letreros Dinámicos', 'Mantención de Letreros Dinámicos', 1),
+  ('2026-11-23', 'ricardo.diaz', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-24', 'ricardo.diaz', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-25', 'ricardo.diaz', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-26', 'ricardo.diaz', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-27', 'ricardo.diaz', 'DMV 01 · Mantención Plantas de Tratamiento de Aguas Servidas', 'Mantención Plantas de Tratamiento de Aguas Servidas', 1),
+  ('2026-11-23', 'manuel.pacheco', 'DMV 03 · Mantención Grupos Generadores', 'Mantención Grupos Generadores', 1),
+  ('2026-11-24', 'manuel.pacheco', 'DMV 03 · Mantención Grupos Generadores', 'Mantención Grupos Generadores', 1),
+  ('2026-11-25', 'manuel.pacheco', 'DMV 03 · Mantención Grupos Generadores', 'Mantención Grupos Generadores', 1),
+  ('2026-11-23', 'luis.jimenez', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 3),
+  ('2026-11-24', 'luis.jimenez', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 3),
+  ('2026-11-25', 'luis.jimenez', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-26', 'luis.jimenez', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-27', 'luis.jimenez', 'DMV 04 · Mantención de Subestaciones y Empalmes', 'Mantención de Subestaciones y Empalmes', 2),
+  ('2026-11-25', 'ricardo.diaz', 'DMV 15 · Mantención Transmisión de Voz, Datos y Video', 'Mantención Transmisión de Voz, Datos y Video', 3),
+  ('2026-11-25', 'manuel.pacheco', 'DMV 16 · Mantención Rack de Comunicaciones', 'Mantención Rack de Comunicaciones', 3),
+  ('2026-11-23', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-24', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-25', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-26', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-27', 'luis.jimenez', 'DMV 17 · Mantención Cámaras de Seguridad', 'Mantención Cámaras de Seguridad', 1),
+  ('2026-11-23', 'ricardo.diaz', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 3),
+  ('2026-11-24', 'ricardo.diaz', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 3),
+  ('2026-11-25', 'ricardo.diaz', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 3),
+  ('2026-11-26', 'ricardo.diaz', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 2),
+  ('2026-11-27', 'ricardo.diaz', 'DMV 21 · Mantención de Citófonos de Emergencia (Postes SOS)', 'Mantención de Citófonos de Emergencia (Postes SOS)', 2),
+  ('2026-11-24', 'luis.jimenez', 'DMV 22 · Mantención de Letreros Dinámicos', 'Mantención de Letreros Dinámicos', 1)
+  ) as v(fecha, usuario, actividad, titulo, cantidad)
+  join public.usuarios u on u.usuario = v.usuario
+on conflict (fecha, trabajador_id, actividad) do nothing;

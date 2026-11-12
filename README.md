@@ -25,9 +25,16 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 4. En GitHub, abre **Settings > Pages** de este repositorio y publica desde la rama `main`, carpeta `/ (root)`.
 5. Abre la dirección que entrega GitHub Pages y crea la contraseña del administrador de inmediato: mientras no exista, cualquiera que abra la página podría crearla.
 
+## Plan preventivo
+
+- El administrador carga el calendario semanal (Excel) en la sección **Plan preventivo**. Cada celda de día con el nombre de un técnico es una asignación.
+- La cantidad programada de cada actividad se reparte en partes enteras entre los días asignados; lo que sobra va a los primeros días (12 en 5 días queda 3, 3, 2, 2, 2).
+- Cada actividad se convierte sola en una OT para su técnico el día que corresponde, la primera vez que alguien abre la página ese día.
+- `supabase.sql` ya trae cargadas las semanas 47 y 48 (16 al 27 de noviembre de 2026).
+
 ## Archivos
 
-- `index.html`, `app.js`, `logo.png`: la página.
+- `index.html`, `app.js`, `calendario.js`, `logo.png`: la página.
 - `config.js`: dirección y clave pública del proyecto de Supabase.
 - `supabase.sql`: tablas y funciones de la base de datos. Se puede volver a ejecutar sin perder datos.
 

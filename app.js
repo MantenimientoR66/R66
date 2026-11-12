@@ -20,7 +20,7 @@ function h(tag, attrs, ...kids){
 
 const CLAVE_TOKEN = "ot_r66_token";
 const S = {
-  sb:null, token:null, yo:null, admin:false, ordenes:[], trabajadores:[],
+  sb:null, token:null, yo:null, admin:false, ordenes:[], trabajadores:[], plan:[], huellaPlan:"", importar:null,
   huella:"", huellaEquipo:"", filtro:"todas", abiertos:{}, borradores:{}, notas:{}, ocupado:{},
   confirmar:{}, errores:{}, fotos:{}, pidiendoFoto:{}, temporal:"", reloj:null
 };
@@ -92,7 +92,7 @@ async function rpc(fn, args){
 
 /* ---------- acceso ---------- */
 function cerrarLocal(msg){
-  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.huella = ""; S.huellaEquipo = "";
+  guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.importar = null;
   S.fotos = {}; S.borradores = {}; S.temporal = "";
   $("rol").textContent = "";
   vista("v-login");
@@ -112,7 +112,7 @@ function entrar(sesion){
 function abrirApp(){
   S.admin = S.yo.rol === "admin"; S.temporal = "";
   $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : " · Técnico");
-  $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin;
+  $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
   aviso("");
   vista("v-app"); render(); cargar();
   S.reloj = setInterval(cargar, 30000);
@@ -173,8 +173,10 @@ async function cargar(){
   try {
     const d = await rpc("ot_listar", {p_token:S.token});
     const hu = JSON.stringify(d.ordenes), he = JSON.stringify(d.trabajadores);
-    S.ordenes = d.ordenes; S.trabajadores = d.trabajadores;
+    const hp = JSON.stringify(d.plan || []);
+    S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
+    if (hp !== S.huellaPlan){ S.huellaPlan = hp; renderPlan(); }
     if (hu !== S.huella){ S.huella = hu; render(); }
     if ($("aviso").textContent.startsWith("No hay conexión")) aviso("");
   } catch (e){ if (S.token && !$("v-app").hidden) aviso(e.message); }
@@ -260,6 +262,7 @@ function tarjeta(o){
   const meta = h("div", {class:"meta"},
     S.admin ? h("span", null, o.trabajador) : null,
     o.ubicacion ? h("span", null, o.ubicacion) : null,
+    o.origen === "plan" ? h("span", null, "Preventivo") : null,
     o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
@@ -271,6 +274,7 @@ function tarjeta(o){
 
   const cuerpo = h("div", {class:"ot-cuerpo"});
   if (o.actividad) cuerpo.append(bloque("Código de actividad", h("p", {class:"cod"}, o.actividad)));
+  if (o.cantidad != null) cuerpo.append(bloque("Cantidad programada", h("p", {class:"cod"}, cantTxt(o.cantidad) + " " + (o.unidad || "UN"))));
   cuerpo.append(bloque("Detalle del trabajo", h("p", null, o.detalle)));
   cuerpo.append(h("p", {class:"nota"}, "Asignada el " + fecha(o.creada)));
   if (estado === "devuelta" && o.nota_devolucion)
@@ -483,6 +487,82 @@ $("form-nueva").addEventListener("submit", async ev => {
 });
 
 opcionesActividad($("n-act"), "");
+
+/* ---------- plan preventivo ---------- */
+function cantTxt(n){ return String(Number(n)).replace(".", ","); }
+function diaTxt(iso){
+  const d = new Date(iso + "T12:00:00"), dias = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  return dias[d.getDay()] + " " + fechaCorta(iso);
+}
+function tablaPlan(filas, conQuitar){
+  const caja = h("div", {class:"lista"});
+  let dia = null, cuerpo = null;
+  for (const p of filas){
+    if (p.fecha !== dia){
+      dia = p.fecha;
+      cuerpo = h("tbody");
+      caja.append(h("div", {class:"bloque"}, h("span", {class:"rot"}, diaTxt(dia)),
+        h("div", {class:"tabla-caja"}, h("table", {class:"plan"}, cuerpo))));
+    }
+    cuerpo.append(h("tr", null,
+      h("td", null, p.tecnico), h("td", null, p.actividad), h("td", {class:"num-cel"}, cantTxt(p.cantidad) + " " + (p.unidad || "UN")),
+      conQuitar ? h("td", null, h("button", {class:"btn chico", type:"button", id:"pq-"+p.id, onclick: async ev => {
+        ev.target.disabled = true;
+        try { await rpc("ot_plan_eliminar", {p_token:S.token, p_id:p.id}); await cargar(); }
+        catch (e){ $("p-estado").textContent = e.message; ev.target.disabled = false; }
+      }}, "Quitar")) : null));
+  }
+  return caja;
+}
+function renderPlan(){
+  if (!S.admin) return;
+  $("plan-titulo").textContent = "Plan preventivo (" + S.plan.length + " por generar)";
+  const lista = $("plan-lista"); lista.replaceChildren();
+  if (!S.plan.length) lista.append(h("p", {class:"nota"}, "No hay actividades programadas pendientes. Carga un calendario semanal para programarlas."));
+  else lista.append(tablaPlan(S.plan, true));
+}
+function renderImportar(){
+  const v = $("p-vista"); v.replaceChildren();
+  const imp = S.importar;
+  $("p-cargar").hidden = !(imp && imp.plan.length && !imp.avisos.length);
+  if (!imp) return;
+  for (const a of imp.avisos) v.append(h("p", {class:"mensaje"}, a));
+  if (!imp.plan.length){ v.append(h("p", {class:"nota"}, "No encontré actividades con técnico asignado en este archivo.")); return; }
+  const total = imp.plan.reduce((s, p) => s + p.cantidad, 0);
+  v.append(h("p", {class:"nota"}, imp.plan.length + " órdenes de trabajo, " + cantTxt(total) + " unidades en total. Revisa el reparto antes de cargar."));
+  v.append(tablaPlan(imp.plan, false));
+}
+$("p-archivo").addEventListener("change", async ev => {
+  const file = ev.target.files && ev.target.files[0], est = $("p-estado");
+  S.importar = null; est.textContent = ""; renderImportar();
+  if (!file) return;
+  if (!window.XLSX || !window.leerCalendario){ est.textContent = "No se pudo cargar el lector de Excel. Revisa tu conexión y recarga la página."; return; }
+  try {
+    const wb = XLSX.read(await file.arrayBuffer());
+    let plan = [], avisos = [];
+    for (const nombre of wb.SheetNames){
+      const filas = XLSX.utils.sheet_to_json(wb.Sheets[nombre], {header:1, raw:true, defval:null});
+      const r = leerCalendario(filas, ACTIVIDADES, S.trabajadores.filter(t => t.activo));
+      plan = plan.concat(r.plan); avisos = avisos.concat(r.avisos);
+    }
+    plan.sort((x, y) => x.fecha < y.fecha ? -1 : x.fecha > y.fecha ? 1 : x.tecnico.localeCompare(y.tecnico));
+    S.importar = {plan, avisos};
+    if (avisos.length) est.textContent = "Corrige el archivo o el nombre del técnico en Equipo y vuelve a elegirlo.";
+  } catch (e){ est.textContent = "No se pudo leer el archivo. Tiene que ser un Excel (.xlsx) con el formato del calendario semanal."; }
+  renderImportar();
+});
+$("p-cargar").addEventListener("click", async ev => {
+  const est = $("p-estado");
+  if (!S.importar) return;
+  ev.target.disabled = true; est.textContent = "Cargando…";
+  try {
+    const n = await rpc("ot_plan_cargar", {p_token:S.token, p_filas:S.importar.plan.map(p => ({fecha:p.fecha, trabajador_id:p.trabajador_id,
+      actividad:p.actividad, titulo:p.titulo, cantidad:p.cantidad, unidad:p.unidad}))});
+    est.textContent = n + " actividades programadas. Cada una se convertirá en OT el día que corresponde.";
+    S.importar = null; $("p-archivo").value = ""; renderImportar(); await cargar();
+  } catch (e){ est.textContent = e.message; }
+  ev.target.disabled = false;
+});
 
 /* ---------- inicio ---------- */
 async function iniciar(){
