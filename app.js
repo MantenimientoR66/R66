@@ -173,7 +173,8 @@ async function cargar(){
   cargando = true;
   try {
     const d = await rpc("ot_listar", {p_token:S.token});
-    const hu = JSON.stringify(d.ordenes), he = JSON.stringify(d.trabajadores);
+    const hu = JSON.stringify(d.ordenes), he = JSON.stringify([d.trabajadores, d.turnos || []]);
+    S.turnos = d.turnos || [];
     const hp = JSON.stringify(d.plan || []);
     S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
@@ -209,6 +210,21 @@ function enFiltro(e){
   if (S.filtro === "todas") return true;
   if (S.filtro === "pendientes") return e === "asignada" || e === "devuelta";
   return e === S.filtro;
+}
+
+/* ---------- aviso por WhatsApp ---------- */
+function enlaceWhatsApp(o){
+  const num = String(o.telefono || "").replace(/\D/g, "");
+  if (num.length < 8) return null;
+  const lineas = [
+    "*Incidencia INC-" + String(o.numero || 0).padStart(4,"0") + " · Ruta de la Fruta*",
+    "Informada: " + fecha(o.creada) + (o.creada_por ? " por " + o.creada_por : ""),
+    o.ubicacion ? "Ubicación: " + o.ubicacion : null,
+    "Qué pasa: " + o.detalle,
+    "Plazo: cerrarla antes del " + fecha(plazoInc(o)),
+    "Ciérrala aquí: " + location.origin + location.pathname
+  ].filter(Boolean);
+  return "https://wa.me/" + num + "?text=" + encodeURIComponent(lineas.join("\n"));
 }
 
 /* ---------- plazo de las incidencias ---------- */
@@ -339,6 +355,13 @@ function tarjeta(o){
   if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
   if (estado === "cerrada")
     cuerpo.append(bloque("Cierre", h("p", null, "Cerrada el " + fecha(o.cerrada) + (inc ? " por " + o.trabajador : "") + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
+  if (inc && jefe && estado !== "cerrada"){
+    const enlace = enlaceWhatsApp(o);
+    cuerpo.append(enlace
+      ? h("div", {class:"acciones"}, h("a", {class:"btn wa", id:"wa-"+id, href:enlace, target:"_blank", rel:"noopener"}, "Avisar por WhatsApp a " + o.trabajador),
+          h("span", {class:"nota"}, "Se abre WhatsApp con el mensaje escrito; solo falta enviarlo."))
+      : h("p", {class:"nota"}, "No se puede avisar por WhatsApp: falta el teléfono de " + o.trabajador + ". El administrador lo agrega en Equipo."));
+  }
   if (S.errores[id]) cuerpo.append(h("p", {class:"mensaje"}, S.errores[id]));
   if (S.admin) cuerpo.append(accionesAdmin(o));
   card.append(cuerpo);
@@ -472,11 +495,21 @@ function renderEquipo(){
   for (const t of activos) sel.append(h("option", {value:t.id}, t.nombre));
   if (previo && activos.some(t => t.id === previo)) sel.value = previo;
 
+  const tur = $("turnos-lista"); tur.replaceChildren();
+  const conTec = (S.turnos || []).filter(x => x.tecnico);
+  if (!conTec.length) tur.append(h("p", {class:"nota"}, "Ningún técnico está en la rotación de turnos. Incluye al menos a uno."));
+  else tur.append(h("div", {class:"tabla-caja"}, h("table", {class:"rep"},
+    h("thead", null, h("tr", null, h("th", {scope:"col"}, "Turno de emergencia"), h("th", {scope:"col"}, "Técnico"))),
+    h("tbody", null, conTec.map((x, i) => h("tr", null,
+      h("td", null, "Viernes " + fechaCorta(x.desde) + " 14:30 al viernes " + fechaCorta(x.hasta) + " 8:29" + (i === 0 ? " (vigente)" : "")),
+      h("td", null, x.tecnico)))))));
+
   const lista = $("equipo-lista"); lista.replaceChildren();
   for (const t of S.trabajadores){
     const estado = !t.activo ? "Desactivado" : t.sin_clave ? "Sin contraseña: entrégale una clave temporal"
                  : t.debe_cambiar ? "Tiene clave temporal; falta que cree la suya" : "Activo";
     const inp = h("input", {id:"tc-"+t.id, maxlength:"60", placeholder:"Clave temporal nueva"});
+    const tel = h("input", {id:"tf-"+t.id, type:"tel", maxlength:"20", value:t.telefono || "", placeholder:"+56912345678"});
     const est = h("span", {class:"nota"});
     const hacer = async (btn, fn, args, ok) => {
       btn.disabled = true; est.textContent = "Guardando…";
@@ -485,8 +518,11 @@ function renderEquipo(){
       btn.disabled = false;
     };
     lista.append(h("div", {class:"trab"},
-      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario + (t.rol === "control" ? " · Centro de control" + (t.sin_horario ? " · Sin límite de horario" : "") : t.de_turno ? " · De turno" : ""))),
+      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario + (t.rol === "control" ? " · Centro de control" + (t.sin_horario ? " · Sin límite de horario" : "") : t.de_turno ? " · De turno ahora" : t.en_turnos ? " · Hace turnos" : ""))),
       h("span", {class:"nota"}, estado),
+      h("label", {for:"tf-"+t.id}, "Teléfono para WhatsApp (con código de país)", tel),
+      h("div", {class:"acciones"},
+        h("button", {class:"btn chico", type:"button", id:"tfg-"+t.id, onclick: ev => hacer(ev.target, "ot_telefono", {p_telefono:tel.value}, "Teléfono guardado.")}, "Guardar teléfono")),
       h("label", {for:"tc-"+t.id}, "Clave temporal (mínimo 8 caracteres)", inp),
       h("div", {class:"acciones"},
         h("button", {class:"btn chico", type:"button", id:"tg-"+t.id, onclick: () => { inp.value = claveAzar(); est.textContent = "Anótala antes de guardar: después no se puede ver."; }}, "Generar"),
@@ -498,7 +534,9 @@ function renderEquipo(){
         t.rol === "control" ? h("button", {class:"btn chico", type:"button", id:"th-"+t.id,
           onclick: ev => hacer(ev.target, "ot_sin_horario", {p_valor:!t.sin_horario}, "")}, t.sin_horario ? "Limitar al horario" : "Permitir a cualquier hora")
         : h("button", {class:"btn chico", type:"button", id:"tt-"+t.id,
-          onclick: ev => hacer(ev.target, "ot_turno", {p_turno:!t.de_turno}, "")}, t.de_turno ? "Quitar de turno" : "Marcar de turno"),
+          onclick: ev => hacer(ev.target, "ot_turno", {p_turno:!t.en_turnos}, "")}, t.en_turnos ? "Sacar de los turnos" : "Incluir en los turnos"),
+        t.rol !== "control" && t.en_turnos && t.activo && !t.de_turno ? h("button", {class:"btn chico", type:"button", id:"tn-"+t.id,
+          onclick: ev => hacer(ev.target, "ot_turno_fijar", {}, "")}, "Dejar de turno ahora") : null,
         h("button", {class:"btn chico" + (t.activo ? " peligro" : ""), type:"button", id:"ta-"+t.id,
           onclick: ev => hacer(ev.target, "ot_activar_trabajador", {p_activo:!t.activo}, "")}, t.activo ? "Desactivar" : "Activar")),
       est));
@@ -541,11 +579,13 @@ opcionesActividad($("n-act"), "");
 /* ---------- incidencias (centro de control) ---------- */
 function renderIncidencia(){
   const sel = $("i-trab"), previo = sel.value;
-  const deTurno = S.trabajadores.filter(t => t.de_turno), lista = deTurno.length ? deTurno : S.trabajadores;
+  const deTurno = S.trabajadores.find(t => t.de_turno);
   sel.replaceChildren(h("option", {value:""}, "Elige al técnico de turno"));
-  for (const t of lista) sel.append(h("option", {value:t.id}, t.nombre));
-  if (previo && lista.some(t => t.id === previo)) sel.value = previo;
-  else if (lista.length === 1) sel.value = lista[0].id;
+  for (const t of S.trabajadores) sel.append(h("option", {value:t.id}, t.nombre + (t.de_turno ? " (de turno)" : "")));
+  if (previo && previo !== S.turnoAuto && S.trabajadores.some(t => t.id === previo)) sel.value = previo;   // respeta un cambio hecho a mano
+  else sel.value = deTurno ? deTurno.id : "";
+  S.turnoAuto = deTurno ? deTurno.id : "";
+  $("i-turno").textContent = deTurno ? "De turno esta semana: " + deTurno.nombre + ". Queda elegido automáticamente." : "No hay un técnico de turno definido. Avisa al administrador.";
   $("i-enviar").disabled = !S.fuera;
   $("i-horario").textContent = S.sinHorario
     ? "Esta cuenta puede crear incidencias a cualquier hora."
@@ -561,9 +601,11 @@ $("form-inc").addEventListener("submit", async ev => {
   try {
     const n = await rpc("ot_incidencia_crear", {p_token:S.token, p_trabajador:wid, p_descripcion:$("i-desc").value, p_ubicacion:$("i-lugar").value});
     const t = S.trabajadores.find(x => x.id === wid);
-    est.textContent = "INC-" + String(n).padStart(4,"0") + " enviada" + (t ? " a " + t.nombre : "") + ".";
+    est.textContent = "INC-" + String(n).padStart(4,"0") + " enviada" + (t ? " a " + t.nombre : "") + ". Avísale por WhatsApp con el botón de la incidencia.";
     $("i-desc").value = $("i-lugar").value = "";
     await cargar();
+    const nueva = S.ordenes.find(o => o.tipo === "incidencia" && o.numero === n);
+    if (nueva){ S.abiertos[nueva.id] = true; render(); }
   } catch (e){ est.textContent = e.message; }
   $("i-enviar").disabled = !S.fuera;
 });

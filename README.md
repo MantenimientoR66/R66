@@ -27,7 +27,9 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 ## Incidencias fuera de horario
 
-- El administrador crea en **Equipo** un usuario de tipo **Centro de control** y marca "de turno" a los técnicos que reciben incidencias.
+- El administrador crea en **Equipo** un usuario de tipo **Centro de control**.
+- Turnos de emergencia: cada turno parte el viernes a las 14:30 y termina el viernes siguiente a las 8:29. Los técnicos incluidos en la rotación se alternan cada semana y el que está de turno queda elegido automáticamente al crear una incidencia.
+- Cada incidencia abierta tiene un botón **Avisar por WhatsApp** que abre WhatsApp con los datos de la incidencia ya escritos para el técnico. Los teléfonos se guardan desde **Equipo**, no en este repositorio.
 - El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados cuentan completos como fuera de horario: vienen cargados los que quedan de 2026 y el administrador agrega los siguientes en la sección **Feriados**.
 - Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.

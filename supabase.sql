@@ -47,6 +47,8 @@ create table if not exists public.ordenes (
 alter table public.usuarios alter column clave drop not null;
 alter table public.usuarios add column if not exists debe_cambiar boolean not null default false;
 alter table public.usuarios add column if not exists de_turno boolean not null default false; -- técnico de turno fuera de horario
+alter table public.usuarios add column if not exists telefono text; -- para avisar por WhatsApp; se escribe desde la página, no en este archivo
+alter table public.usuarios add column if not exists turno_orden int; -- posición en la rotación de turnos de emergencia (vacío = no hace turnos)
 alter table public.usuarios add column if not exists sin_horario boolean not null default false; -- centro de control que puede crear incidencias a cualquier hora (pruebas)
 -- Roles: admin, trabajador (técnico de terreno) y control (centro de control).
 alter table public.usuarios drop constraint if exists usuarios_rol_check;
@@ -57,6 +59,22 @@ alter table public.ordenes add column if not exists actividad text; -- código d
 alter table public.ordenes add column if not exists cantidad numeric; -- cantidad programada para ese día
 alter table public.ordenes add column if not exists unidad text;
 alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual' o 'plan'
+
+-- Ajustes generales. 'turno_ancla' es el viernes en que parte la rotación con el primer técnico.
+create table if not exists public.ajustes (
+  clave text primary key,
+  valor text not null
+);
+alter table public.ajustes enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.ajustes from anon, authenticated;
+  end if;
+end $$;
+-- Rotación inicial: Luis Jiménez cubre desde ya y el turno que parte el viernes 13-11-2026 a las 14:30;
+-- Ricardo Díaz toma el del viernes 20-11-2026, y así se van alternando cada semana.
+insert into public.ajustes(clave, valor) values ('turno_ancla', '2026-11-13') on conflict (clave) do nothing;
 
 -- Feriados: esos días completos cuentan como fuera del horario laboral.
 create table if not exists public.feriados (
@@ -106,6 +124,14 @@ insert into public.usuarios(usuario, nombre, rol, debe_cambiar) values
   ('luis.jimenez', 'Luis Jiménez', 'trabajador', true),
   ('manuel.pacheco', 'Manuel Pacheco', 'trabajador', true)
 on conflict (usuario) do nothing;
+-- Rotación de turnos de emergencia: Luis Jiménez y Ricardo Díaz. Manuel Pacheco aún no hace turnos.
+do $$
+begin
+  if not exists (select 1 from public.usuarios where turno_orden is not null) then
+    update public.usuarios set turno_orden = 1 where usuario = 'luis.jimenez';
+    update public.usuarios set turno_orden = 2 where usuario = 'ricardo.diaz';
+  end if;
+end $$;
 
 -- Nadie lee ni escribe las tablas directamente: todo pasa por las funciones de abajo.
 alter table public.usuarios enable row level security;
@@ -287,13 +313,71 @@ begin
   if not p_activo then delete from public.sesiones where usuario_id = p_id; end if;
 end $$;
 
--- Marca o desmarca a un técnico como personal de turno (el que recibe incidencias fuera de horario).
+-- ---------- turnos de emergencia ----------
+-- Cada turno parte el viernes a las 14:30 (hora de Chile) y dura hasta el viernes siguiente a las 8:29:59.
+
+-- Fecha del viernes en que partió el turno vigente en el momento dado.
+create or replace function public.ot_turno_inicio(p_t timestamp) returns date
+language plpgsql immutable as $$
+declare d date := p_t::date; atras int := (extract(isodow from p_t)::int - 5 + 7) % 7;
+begin
+  if atras = 0 and p_t::time < time '14:30' then atras := 7; end if;
+  return d - atras;
+end $$;
+
+-- Técnico al que le toca el turno que parte el viernes dado.
+create or replace function public.ot_turno_de(p_inicio date) returns uuid
+language plpgsql stable security definer set search_path = public, extensions as $$
+declare ids uuid[]; ancla date; n int; idx int;
+begin
+  ids := array(select id from public.usuarios where turno_orden is not null and rol = 'trabajador' and activo order by turno_orden, nombre);
+  n := coalesce(array_length(ids, 1), 0);
+  if n = 0 then return null; end if;
+  select valor::date into ancla from public.ajustes where clave = 'turno_ancla';
+  idx := greatest((p_inicio - coalesce(ancla, p_inicio)) / 7, 0);
+  return ids[1 + idx % n];
+end $$;
+
+create or replace function public.ot_turno_actual() returns uuid
+language sql stable security definer set search_path = public, extensions as $$
+  select public.ot_turno_de(public.ot_turno_inicio((now() at time zone 'America/Santiago')::timestamp));
+$$;
+
+-- Incluye o saca a un técnico de la rotación de turnos.
 create or replace function public.ot_turno(p_token text, p_id uuid, p_turno boolean) returns void
 language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform public.ot_admin(p_token);
-  update public.usuarios set de_turno = coalesce(p_turno, false) where id = p_id and rol = 'trabajador';
-  if not found then raise exception 'No se encontró al técnico.'; end if;
+  if coalesce(p_turno, false) then
+    update public.usuarios set turno_orden = coalesce((select max(turno_orden) from public.usuarios), 0) + 1
+     where id = p_id and rol = 'trabajador' and turno_orden is null;
+  else
+    update public.usuarios set turno_orden = null where id = p_id and rol = 'trabajador';
+  end if;
+end $$;
+
+-- Deja a un técnico de la rotación como el que está de turno ahora; los siguientes turnos se corren desde ahí.
+create or replace function public.ot_turno_fijar(p_token text, p_id uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare ids uuid[]; pos int; inicio date;
+begin
+  perform public.ot_admin(p_token);
+  ids := array(select id from public.usuarios where turno_orden is not null and rol = 'trabajador' and activo order by turno_orden, nombre);
+  pos := array_position(ids, p_id);
+  if pos is null then raise exception 'Ese técnico no está en la rotación de turnos. Inclúyelo primero.'; end if;
+  inicio := public.ot_turno_inicio((now() at time zone 'America/Santiago')::timestamp);
+  insert into public.ajustes(clave, valor) values ('turno_ancla', (inicio - 7 * (pos - 1))::text)
+    on conflict (clave) do update set valor = excluded.valor;
+end $$;
+
+create or replace function public.ot_telefono(p_token text, p_id uuid, p_telefono text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare t text := regexp_replace(coalesce(p_telefono,''), '[^0-9+]', '', 'g');
+begin
+  perform public.ot_admin(p_token);
+  if length(trim(coalesce(p_telefono,''))) > 0 and t !~ '^\+?[0-9]{8,15}$' then raise exception 'Escribe el teléfono con código de país, por ejemplo +56912345678.'; end if;
+  update public.usuarios set telefono = nullif(t, '') where id = p_id and rol in ('trabajador','control');
+  if not found then raise exception 'No se encontró al usuario.'; end if;
 end $$;
 
 -- Permite o impide que un usuario de centro de control cree incidencias a cualquier hora (para pruebas).
@@ -328,8 +412,8 @@ begin
   if not u.sin_horario and not public.ot_fuera_horario() then
     raise exception 'Las incidencias solo se pueden crear fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, sin contar feriados).';
   end if;
-  if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo) then
-    raise exception 'Elige a un técnico de turno activo.';
+  if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo and turno_orden is not null) then
+    raise exception 'Elige a un técnico activo que haga turnos de emergencia.';
   end if;
   if length(d) = 0 then raise exception 'Describe lo que está pasando.'; end if;
   insert into public.ordenes(tipo, creada_por, trabajador_id, titulo, detalle, ubicacion, prioridad)
@@ -419,12 +503,15 @@ end $$;
 create or replace function public.ot_listar(p_token text) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb := '[]'::jsonb; fers jsonb := '[]'::jsonb;
+  turnos jsonb := '[]'::jsonb; actual uuid := public.ot_turno_actual();
+  inicio date := public.ot_turno_inicio((now() at time zone 'America/Santiago')::timestamp);
 begin
   u := public.ot_quien(p_token);
   perform public.ot_generar_plan();
   select coalesce(jsonb_agg(jsonb_build_object(
       'id', o.id, 'numero', o.numero, 'tipo', o.tipo, 'creada_por', c.nombre,
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
+      'telefono', case when u.rol in ('admin','control') and o.tipo = 'incidencia' then t.telefono end,
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada,
       'codigo_actividad', o.codigo_actividad, 'descripcion_realizada', o.descripcion_realizada,
@@ -437,19 +524,22 @@ begin
    where u.rol = 'admin' or (u.rol = 'control' and o.tipo = 'incidencia') or o.trabajador_id = u.id;
   if u.rol = 'admin' then
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'usuario', usuario, 'nombre', nombre, 'activo', activo,
-      'rol', rol, 'de_turno', de_turno, 'sin_horario', sin_horario, 'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
+      'rol', rol, 'de_turno', id = actual, 'en_turnos', turno_orden is not null, 'telefono', telefono, 'sin_horario', sin_horario, 'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
       order by rol desc, nombre), '[]'::jsonb) into trabs from public.usuarios where rol in ('trabajador','control');
     select coalesce(jsonb_agg(jsonb_build_object('id', pl.id, 'fecha', pl.fecha, 'tecnico', t.nombre,
       'actividad', pl.actividad, 'cantidad', pl.cantidad, 'unidad', pl.unidad)
       order by pl.fecha, t.nombre, pl.actividad), '[]'::jsonb) into plan
       from public.plan_preventivo pl join public.usuarios t on t.id = pl.trabajador_id where pl.generada is null;
+    select coalesce(jsonb_agg(jsonb_build_object('desde', inicio + 7 * i, 'hasta', inicio + 7 * i + 7,
+      'tecnico', (select nombre from public.usuarios where id = public.ot_turno_de(inicio + 7 * i))) order by i), '[]'::jsonb)
+      into turnos from generate_series(0, 5) as i;
     select coalesce(jsonb_agg(jsonb_build_object('fecha', fecha, 'nombre', nombre) order by fecha), '[]'::jsonb) into fers
       from public.feriados where fecha >= (now() at time zone 'America/Santiago')::date;
   elsif u.rol = 'control' then
-    select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', de_turno)
-      order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador' and activo;
+    select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', id = actual, 'telefono', telefono)
+      order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador' and activo and turno_orden is not null;
   end if;
-  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers,
+  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers, 'turnos', turnos,
     'fuera_horario', public.ot_fuera_horario() or (u.rol = 'control' and u.sin_horario), 'sin_horario', u.sin_horario);
 end $$;
 
@@ -553,7 +643,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan'];
+declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace

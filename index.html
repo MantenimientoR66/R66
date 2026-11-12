@@ -103,6 +103,8 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .trab-cab{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:space-between;align-items:baseline}
 .trab-cab b{overflow-wrap:anywhere}
 .usr{font-variant-numeric:tabular-nums;color:var(--tenue)}
+a.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
+a.btn.wa{background:var(--boton);border-color:var(--boton);color:var(--boton-tinta)}
 .tabla-caja{overflow-x:auto}
 table.plan{border-collapse:collapse;width:100%;font-size:.93rem}
 table.plan td{border-top:1px solid var(--linea);padding:6px 8px 6px 0;vertical-align:top}
@@ -218,6 +220,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
     <section class="panel" id="incidencia" hidden>
       <h2>Nueva incidencia fuera de horario</h2>
       <p class="nota" id="i-horario"></p>
+      <p class="nota" id="i-turno"></p>
       <form id="form-inc" class="lista" autocomplete="off">
         <div class="fila">
           <label for="i-trab">Técnico de turno
@@ -299,7 +302,11 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
     <section class="panel" id="equipo" hidden>
       <details>
         <summary id="equipo-titulo">Equipo</summary>
-        <p class="nota">Entrega a cada persona su usuario y una clave temporal. Al ingresar tendrá que crear su propia contraseña. Marca "de turno" a los técnicos que reciben incidencias fuera de horario.</p>
+        <p class="nota">Entrega a cada persona su usuario y una clave temporal. Al ingresar tendrá que crear su propia contraseña. Agrega el teléfono de quienes hacen turnos para poder avisarles por WhatsApp.</p>
+        <h3 style="margin-top:12px">Turnos de emergencia</h3>
+        <p class="nota">Cada turno parte el viernes a las 14:30 y termina el viernes siguiente a las 8:29. Los técnicos incluidos se van alternando cada semana.</p>
+        <div id="turnos-lista" style="margin-top:6px"></div>
+        <h3 style="margin-top:14px">Personas</h3>
         <div class="lista" id="equipo-lista" style="margin-top:10px"></div>
         <form id="form-trab" class="lista" style="margin-top:14px" autocomplete="off">
           <h3>Agregar usuario</h3>
@@ -349,8 +356,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=8"></script>
-<script src="calendario.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="config.js?v=9"></script>
+<script src="calendario.js?v=9"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
