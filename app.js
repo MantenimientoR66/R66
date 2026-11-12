@@ -211,6 +211,24 @@ function enFiltro(e){
   return e === S.filtro;
 }
 
+/* ---------- plazo de las incidencias ---------- */
+// Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar pasa a alerta.
+const PLAZO_INC_H = 24, ALERTA_INC_H = 12;
+function horasInc(o){ return (Date.now() - new Date(o.creada)) / 3600000; }
+function nivelInc(o){
+  if (o.tipo !== "incidencia" || o.estado === "cerrada") return 0;
+  const hs = horasInc(o);
+  return hs >= PLAZO_INC_H ? 2 : hs >= ALERTA_INC_H ? 1 : 0;
+}
+function plazoInc(o){ return new Date(new Date(o.creada).getTime() + PLAZO_INC_H * 3600000); }
+function firmaAlertas(){ return S.ordenes.map(o => nivelInc(o)).join(""); }
+let ultimaFirma = "";
+setInterval(() => {            // el paso del tiempo cambia las alertas aunque no cambien los datos
+  if ($("v-app").hidden) return;
+  const f = firmaAlertas();
+  if (f !== ultimaFirma){ render(); renderReportes(); }
+}, 60000);
+
 /* ---------- render ---------- */
 function render(){
   const act = document.activeElement, actId = act && act.id;
@@ -219,7 +237,16 @@ function render(){
 
   const jefe = S.admin || S.control;
   const peso = jefe ? {revision:0, devuelta:1, asignada:2, cerrada:3} : {devuelta:0, asignada:1, revision:2, cerrada:3};
-  const items = S.ordenes.slice().sort((a,b) => (peso[a.estado]-peso[b.estado]) || (new Date(b.creada) - new Date(a.creada)));
+  ultimaFirma = firmaAlertas();
+  const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (peso[a.estado]-peso[b.estado]) || (new Date(b.creada) - new Date(a.creada)));
+  const enAlerta = jefe ? items.filter(o => nivelInc(o) > 0) : [];
+  const ban = $("alerta-inc");
+  ban.hidden = !enAlerta.length;
+  if (enAlerta.length){
+    const venc = enAlerta.filter(o => nivelInc(o) === 2).length;
+    ban.textContent = (enAlerta.length === 1 ? "1 incidencia lleva" : enAlerta.length + " incidencias llevan") + " más de " + ALERTA_INC_H + " horas sin cerrar" +
+      (venc ? "; " + (venc === 1 ? "1 ya superó" : venc + " ya superaron") + " el plazo de " + PLAZO_INC_H + " horas." : ".");
+  }
   const cuenta = {todas:items.length, pendientes:0, revision:0, cerrada:0};
   for (const o of items){
     if (o.estado === "asignada" || o.estado === "devuelta") cuenta.pendientes++; else cuenta[o.estado]++;
@@ -267,7 +294,9 @@ function imagen(o){
 function tarjeta(o){
   const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", jefe = S.admin || S.control;
   const necesitaAccion = S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "devuelta");
-  const rotEstado = inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
+  const nivel = nivelInc(o), roja = jefe && nivel > 0;
+  const rotEstado = roja ? (nivel === 2 ? "Plazo vencido" : "Sin cerrar hace " + Math.floor(horasInc(o)) + " h")
+    : inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
   const abierto = (id in S.abiertos) ? S.abiertos[id] : necesitaAccion;
   const vencida = estado !== "cerrada" && o.fecha_limite && o.fecha_limite < hoyIso();
   const meta = h("div", {class:"meta"},
@@ -279,9 +308,9 @@ function tarjeta(o){
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
     onclick: () => { S.abiertos[id] = !abierto; render(); }},
-    h("div", {class:"ot-linea"}, h("span", {class:"num"}, (inc ? "INC-" : "OT-") + String(o.numero||0).padStart(4,"0")), h("span", {class:"pill e-"+estado}, rotEstado)),
+    h("div", {class:"ot-linea"}, h("span", {class:"num"}, (inc ? "INC-" : "OT-") + String(o.numero||0).padStart(4,"0")), h("span", {class:"pill " + (roja ? "e-devuelta" : "e-"+estado)}, rotEstado)),
     h("h3", null, o.titulo), meta);
-  const card = h("article", {class:"ot e-"+estado}, cab);
+  const card = h("article", {class:"ot e-"+estado + (roja ? " alerta" : "")}, cab);
   if (!abierto) return card;
 
   const cuerpo = h("div", {class:"ot-cuerpo"});
@@ -289,6 +318,10 @@ function tarjeta(o){
   if (o.cantidad != null) cuerpo.append(bloque("Cantidad programada", h("p", {class:"cod"}, cantTxt(o.cantidad) + " " + (o.unidad || "UN"))));
   cuerpo.append(bloque(inc ? "Qué está pasando" : "Detalle del trabajo", h("p", null, o.detalle)));
   cuerpo.append(h("p", {class:"nota"}, inc ? "Informada el " + fecha(o.creada) + (o.creada_por ? " por " + o.creada_por : "") : "Asignada el " + fecha(o.creada)));
+  if (inc && estado !== "cerrada")
+    cuerpo.append(h("p", {class: nivel ? "devol" : "nota"}, (nivel === 2 ? "Plazo vencido: había que cerrarla antes del " : "Plazo de " + PLAZO_INC_H + " horas: hay que cerrarla antes del ") + fecha(plazoInc(o)) + "."));
+  if (inc && estado === "cerrada" && o.cerrada)
+    cuerpo.append(h("p", {class:"nota"}, new Date(o.cerrada) <= plazoInc(o) ? "Cerrada dentro del plazo de " + PLAZO_INC_H + " horas." : "Cerrada fuera del plazo de " + PLAZO_INC_H + " horas."));
   if (estado === "devuelta" && o.nota_devolucion)
     cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), o.nota_devolucion));
 
@@ -582,8 +615,9 @@ function renderReportes(){
   const alertas = [];
   for (const o of S.ordenes){
     if (o.tipo === "incidencia"){
-      if (o.estado !== "cerrada" && Date.now() - new Date(o.creada) > 24 * 3600 * 1000)
-        alertas.push([isoLocal(o.creada), o.trabajador + " no ha cerrado la incidencia INC-" + String(o.numero).padStart(4,"0") + ", informada el " + fecha(o.creada) + "."]);
+      const nv = nivelInc(o);
+      if (nv) alertas.push([isoLocal(o.creada), o.trabajador + " no ha cerrado la incidencia INC-" + String(o.numero).padStart(4,"0") + ", informada el " + fecha(o.creada) +
+        (nv === 2 ? ". Superó el plazo de " + PLAZO_INC_H + " horas." : ". Lleva más de " + ALERTA_INC_H + " horas; el plazo vence el " + fecha(plazoInc(o)) + ".")]);
     } else if (o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
       alertas.push([o.fecha_limite, o.trabajador + " no realizó " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + "), programada para el " + diaTxt(o.fecha_limite).toLowerCase() +
         (o.estado === "devuelta" ? ". Está devuelta para corregir." : ".")]);
@@ -592,7 +626,7 @@ function renderReportes(){
   alertas.sort((x, y) => x[0] < y[0] ? 1 : -1);
   $("rep-titulo").textContent = "Reportes" + (alertas.length ? " (" + alertas.length + (alertas.length === 1 ? " alerta)" : " alertas)") : "");
   caja.append(h("h3", null, "Alertas"));
-  if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar ni incidencias abiertas hace más de 24 horas."));
+  if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar ni incidencias abiertas hace más de 12 horas."));
   else caja.append(h("div", {class:"lista"}, alertas.map(al => h("p", {class:"mensaje"}, al[1]))));
 
   // 2. Trabajos e incidencias por técnico en el período elegido.

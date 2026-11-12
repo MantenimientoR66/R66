@@ -74,6 +74,8 @@ button.btn:disabled{opacity:.55;cursor:default}
 .ot.e-devuelta{border-left-color:var(--alerta)}
 .ot.e-revision{border-left-color:var(--aviso)}
 .ot.e-cerrada{border-left-color:var(--ok)}
+.ot.alerta{border-color:var(--alerta);border-left-color:var(--alerta);background:color-mix(in srgb, var(--alerta) 9%, var(--panel))}
+#alerta-inc{font-weight:600;color:var(--alerta);background:color-mix(in srgb, var(--alerta) 9%, var(--panel))}
 .ot-cab{width:100%;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
 .ot-linea{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .num{font:700 1rem/1 var(--display);letter-spacing:.02em;color:var(--info);font-variant-numeric:tabular-nums}
@@ -175,6 +177,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
   </section>
 
   <div id="v-app" class="lista" style="gap:18px" hidden>
+    <div class="mensaje" id="alerta-inc" role="alert" hidden></div>
     <section class="filtros" id="filtros" aria-label="Filtrar por estado"></section>
 
     <section class="panel" id="nueva" hidden>
@@ -346,8 +349,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=7"></script>
-<script src="calendario.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="config.js?v=8"></script>
+<script src="calendario.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
