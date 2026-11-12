@@ -180,8 +180,8 @@ async function cargar(){
     if (hp !== S.huellaPlan){ S.huellaPlan = hp; renderPlan(); }
     const hf = JSON.stringify(d.feriados || []);
     if (hf !== S.huellaFer){ S.huellaFer = hf; S.feriados = d.feriados || []; renderFeriados(); }
-    S.fuera = !!d.fuera_horario;
-    const hi = he + "|" + S.fuera;
+    S.fuera = !!d.fuera_horario; S.sinHorario = !!d.sin_horario;
+    const hi = he + "|" + S.fuera + "|" + S.sinHorario;
     if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
     const cambioRep = hu !== S.huella || hp !== S.huellaRep;
     if (hu !== S.huella){ S.huella = hu; render(); }
@@ -452,7 +452,7 @@ function renderEquipo(){
       btn.disabled = false;
     };
     lista.append(h("div", {class:"trab"},
-      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario + (t.rol === "control" ? " · Centro de control" : t.de_turno ? " · De turno" : ""))),
+      h("div", {class:"trab-cab"}, h("b", null, t.nombre), h("span", {class:"usr"}, "Usuario: " + t.usuario + (t.rol === "control" ? " · Centro de control" + (t.sin_horario ? " · Sin límite de horario" : "") : t.de_turno ? " · De turno" : ""))),
       h("span", {class:"nota"}, estado),
       h("label", {for:"tc-"+t.id}, "Clave temporal (mínimo 8 caracteres)", inp),
       h("div", {class:"acciones"},
@@ -462,7 +462,9 @@ function renderEquipo(){
           if (c.length < 8){ est.textContent = "La clave temporal debe tener al menos 8 caracteres."; return; }
           hacer(ev.target, "ot_clave_trabajador", {p_clave:c}, "Clave temporal guardada: " + c);
         }}, "Guardar clave temporal"),
-        t.rol === "control" ? null : h("button", {class:"btn chico", type:"button", id:"tt-"+t.id,
+        t.rol === "control" ? h("button", {class:"btn chico", type:"button", id:"th-"+t.id,
+          onclick: ev => hacer(ev.target, "ot_sin_horario", {p_valor:!t.sin_horario}, "")}, t.sin_horario ? "Limitar al horario" : "Permitir a cualquier hora")
+        : h("button", {class:"btn chico", type:"button", id:"tt-"+t.id,
           onclick: ev => hacer(ev.target, "ot_turno", {p_turno:!t.de_turno}, "")}, t.de_turno ? "Quitar de turno" : "Marcar de turno"),
         h("button", {class:"btn chico" + (t.activo ? " peligro" : ""), type:"button", id:"ta-"+t.id,
           onclick: ev => hacer(ev.target, "ot_activar_trabajador", {p_activo:!t.activo}, "")}, t.activo ? "Desactivar" : "Activar")),
@@ -512,7 +514,9 @@ function renderIncidencia(){
   if (previo && lista.some(t => t.id === previo)) sel.value = previo;
   else if (lista.length === 1) sel.value = lista[0].id;
   $("i-enviar").disabled = !S.fuera;
-  $("i-horario").textContent = S.fuera
+  $("i-horario").textContent = S.sinHorario
+    ? "Esta cuenta puede crear incidencias a cualquier hora."
+    : S.fuera
     ? "Estás fuera del horario laboral: puedes crear incidencias para el personal de turno."
     : "Ahora es horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30). Las incidencias solo se pueden crear fuera de ese horario, o en fin de semana y feriados.";
 }

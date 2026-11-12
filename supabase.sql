@@ -47,6 +47,7 @@ create table if not exists public.ordenes (
 alter table public.usuarios alter column clave drop not null;
 alter table public.usuarios add column if not exists debe_cambiar boolean not null default false;
 alter table public.usuarios add column if not exists de_turno boolean not null default false; -- técnico de turno fuera de horario
+alter table public.usuarios add column if not exists sin_horario boolean not null default false; -- centro de control que puede crear incidencias a cualquier hora (pruebas)
 -- Roles: admin, trabajador (técnico de terreno) y control (centro de control).
 alter table public.usuarios drop constraint if exists usuarios_rol_check;
 alter table public.usuarios add constraint usuarios_rol_check check (rol in ('admin','trabajador','control'));
@@ -295,6 +296,15 @@ begin
   if not found then raise exception 'No se encontró al técnico.'; end if;
 end $$;
 
+-- Permite o impide que un usuario de centro de control cree incidencias a cualquier hora (para pruebas).
+create or replace function public.ot_sin_horario(p_token text, p_id uuid, p_valor boolean) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  update public.usuarios set sin_horario = coalesce(p_valor, false) where id = p_id and rol = 'control';
+  if not found then raise exception 'No se encontró al usuario de centro de control.'; end if;
+end $$;
+
 -- ---------- incidencias fuera de horario (centro de control) ----------
 
 -- Horario laboral, hora de Chile: lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30.
@@ -315,7 +325,7 @@ declare u public.usuarios; n int; d text := trim(coalesce(p_descripcion,''));
 begin
   u := public.ot_quien(p_token);
   if u.rol <> 'control' then raise exception 'Solo el centro de control puede crear incidencias.'; end if;
-  if not public.ot_fuera_horario() then
+  if not u.sin_horario and not public.ot_fuera_horario() then
     raise exception 'Las incidencias solo se pueden crear fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, sin contar feriados).';
   end if;
   if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo) then
@@ -427,7 +437,7 @@ begin
    where u.rol = 'admin' or (u.rol = 'control' and o.tipo = 'incidencia') or o.trabajador_id = u.id;
   if u.rol = 'admin' then
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'usuario', usuario, 'nombre', nombre, 'activo', activo,
-      'rol', rol, 'de_turno', de_turno, 'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
+      'rol', rol, 'de_turno', de_turno, 'sin_horario', sin_horario, 'sin_clave', clave is null, 'debe_cambiar', debe_cambiar)
       order by rol desc, nombre), '[]'::jsonb) into trabs from public.usuarios where rol in ('trabajador','control');
     select coalesce(jsonb_agg(jsonb_build_object('id', pl.id, 'fecha', pl.fecha, 'tecnico', t.nombre,
       'actividad', pl.actividad, 'cantidad', pl.cantidad, 'unidad', pl.unidad)
@@ -439,7 +449,8 @@ begin
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', de_turno)
       order by nombre), '[]'::jsonb) into trabs from public.usuarios where rol = 'trabajador' and activo;
   end if;
-  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers, 'fuera_horario', public.ot_fuera_horario());
+  return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers,
+    'fuera_horario', public.ot_fuera_horario() or (u.rol = 'control' and u.sin_horario), 'sin_horario', u.sin_horario);
 end $$;
 
 create or replace function public.ot_foto(p_token text, p_ot uuid) returns text
