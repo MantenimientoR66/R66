@@ -59,6 +59,11 @@ alter table public.ordenes add column if not exists actividad text; -- código d
 alter table public.ordenes add column if not exists cantidad numeric; -- cantidad programada para ese día
 alter table public.ordenes add column if not exists unidad text;
 alter table public.ordenes add column if not exists origen text not null default 'manual'; -- 'manual', 'plan' o 'ronda'
+alter table public.ordenes add column if not exists aceptada timestamptz; -- momento en que el técnico aceptó la orden y la puso en ejecución
+alter table public.ordenes add column if not exists foto2 text; -- segunda foto del cierre (opcional)
+-- Estados: asignada -> ejecucion (el técnico la acepta) -> revision (envió su reporte) -> cerrada; devuelta = el administrador pidió corregir.
+alter table public.ordenes drop constraint if exists ordenes_estado_check;
+alter table public.ordenes add constraint ordenes_estado_check check (estado in ('asignada','ejecucion','revision','devuelta','cerrada'));
 
 -- Ajustes generales. 'turno_ancla' es el viernes en que parte la rotación con el primer técnico.
 create table if not exists public.ajustes (
@@ -149,6 +154,21 @@ begin
   if not exists (select 1 from public.usuarios where turno_orden is not null) then
     update public.usuarios set turno_orden = 1 where usuario = 'luis.jimenez';
     update public.usuarios set turno_orden = 2 where usuario = 'ricardo.diaz';
+  end if;
+end $$;
+
+-- Corrección del 13-11-2026 (se aplica una sola vez): la rotación había quedado invertida.
+-- Luis Jiménez toma el turno que parte el viernes 13-11-2026 a las 14:30 y Ricardo Díaz el del 20-11-2026.
+do $$
+begin
+  if not exists (select 1 from public.ajustes where clave = 'turno_correccion_20261113') then
+    update public.usuarios set turno_orden = turno_orden + 2
+     where turno_orden is not null and usuario not in ('luis.jimenez', 'ricardo.diaz');
+    update public.usuarios set turno_orden = 1 where usuario = 'luis.jimenez';
+    update public.usuarios set turno_orden = 2 where usuario = 'ricardo.diaz';
+    insert into public.ajustes(clave, valor) values ('turno_ancla', '2026-11-13')
+      on conflict (clave) do update set valor = excluded.valor;
+    insert into public.ajustes(clave, valor) values ('turno_correccion_20261113', 'aplicada');
   end if;
 end $$;
 
@@ -353,8 +373,8 @@ begin
   n := coalesce(array_length(ids, 1), 0);
   if n = 0 then return null; end if;
   select valor::date into ancla from public.ajustes where clave = 'turno_ancla';
-  idx := greatest((p_inicio - coalesce(ancla, p_inicio)) / 7, 0);
-  return ids[1 + idx % n];
+  idx := (p_inicio - coalesce(ancla, p_inicio)) / 7;      -- semanas desde el ancla; negativo = turnos anteriores
+  return ids[1 + ((idx % n) + n) % n];
 end $$;
 
 create or replace function public.ot_turno_actual() returns uuid
@@ -568,9 +588,9 @@ begin
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
       'telefono', case when u.rol in ('admin','control') and o.tipo = 'incidencia' then t.telefono end,
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
-      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada,
+      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada,
       'codigo_actividad', o.codigo_actividad, 'descripcion_realizada', o.descripcion_realizada,
-      'tiene_foto', o.foto is not null, 'enviado', o.enviado,
+      'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado,
       'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada)
     order by o.creada desc), '[]'::jsonb)
     into ords
@@ -598,12 +618,13 @@ begin
     'fuera_horario', public.ot_fuera_horario() or (u.rol = 'control' and u.sin_horario), 'sin_horario', u.sin_horario);
 end $$;
 
-create or replace function public.ot_foto(p_token text, p_ot uuid) returns text
+drop function if exists public.ot_foto(text, uuid);
+create or replace function public.ot_foto(p_token text, p_ot uuid, p_n int default 1) returns text
 language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; f text;
 begin
   u := public.ot_quien(p_token);
-  select foto into f from public.ordenes
+  select case when p_n = 2 then foto2 else foto end into f from public.ordenes
    where id = p_ot and (u.rol = 'admin' or trabajador_id = u.id or (u.rol = 'control' and tipo = 'incidencia'));
   return f;
 end $$;
@@ -629,21 +650,35 @@ begin
   return n;
 end $$;
 
-create or replace function public.ot_reportar(p_token text, p_ot uuid, p_codigo text, p_descripcion text, p_foto text) returns void
+-- El técnico acepta la orden: queda en ejecución y se guarda la hora, para medir cuánto tarda en partir.
+create or replace function public.ot_aceptar(p_token text, p_ot uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios;
+begin
+  u := public.ot_quien(p_token);
+  update public.ordenes set estado = 'ejecucion', aceptada = now()
+   where id = p_ot and trabajador_id = u.id and estado = 'asignada';
+  if not found then raise exception 'Esta orden no está asignada a ti o ya fue aceptada.'; end if;
+end $$;
+
+drop function if exists public.ot_reportar(text, uuid, text, text, text);
+create or replace function public.ot_reportar(p_token text, p_ot uuid, p_codigo text, p_descripcion text, p_foto text, p_foto2 text default null) returns void
 language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; o public.ordenes;
 begin
   u := public.ot_quien(p_token);
   select * into o from public.ordenes where id = p_ot and trabajador_id = u.id;
   if not found then raise exception 'Esta orden no está asignada a ti.'; end if;
-  if o.estado not in ('asignada','devuelta') then raise exception 'Esta orden ya fue enviada o cerrada.'; end if;
-  if p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000) then
+  if o.estado = 'asignada' then raise exception 'Primero acepta la orden para ponerla en ejecución.'; end if;
+  if o.estado not in ('ejecucion','devuelta') then raise exception 'Esta orden ya fue enviada o cerrada.'; end if;
+  if (p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000))
+     or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
     raise exception 'La foto no es válida o es demasiado grande.';
   end if;
   if o.tipo = 'incidencia' then
     -- Una incidencia no lleva código de actividad ni exige foto: el reporte del técnico la cierra.
     if length(trim(coalesce(p_descripcion,''))) = 0 then raise exception 'Describe cómo se resolvió la incidencia.'; end if;
-    update public.ordenes set descripcion_realizada = trim(p_descripcion), foto = coalesce(p_foto, foto),
+    update public.ordenes set descripcion_realizada = trim(p_descripcion), foto = coalesce(p_foto, foto), foto2 = coalesce(p_foto2, foto2),
       enviado = now(), estado = 'cerrada', cerrada = now(), nota_cierre = null where id = p_ot;
     return;
   end if;
@@ -651,11 +686,8 @@ begin
     raise exception 'Completa el código de actividad y la descripción.';
   end if;
   if p_foto is null and o.foto is null then raise exception 'Agrega una foto del trabajo antes de enviar.'; end if;
-  if p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000) then
-    raise exception 'La foto no es válida o es demasiado grande.';
-  end if;
   update public.ordenes set codigo_actividad = trim(p_codigo), descripcion_realizada = trim(p_descripcion),
-    foto = coalesce(p_foto, foto), enviado = now(), estado = 'revision' where id = p_ot;
+    foto = coalesce(p_foto, foto), foto2 = coalesce(p_foto2, foto2), enviado = now(), estado = 'revision' where id = p_ot;
 end $$;
 
 create or replace function public.ot_cerrar(p_token text, p_ot uuid, p_nota text) returns void

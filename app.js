@@ -57,7 +57,7 @@ function opcionesActividad(sel, valor){
   for (const a of lista) sel.append(h("option", {value:a}, a));
   sel.value = valor || "";
 }
-const ESTADOS = {asignada:"Asignada", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
+const ESTADOS = {asignada:"Asignada", ejecucion:"En ejecución", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
 
 function aviso(texto, bien){
   const a = $("aviso");
@@ -211,7 +211,8 @@ function hoyIso(){
 function numTxt(n){ return "OT-" + String(n||0).padStart(4,"0"); }
 function enFiltro(e){
   if (S.filtro === "todas") return true;
-  if (S.filtro === "pendientes") return e === "asignada" || e === "devuelta";
+  if (S.filtro === "pendientes") return e === "asignada";
+  if (S.filtro === "ejecucion") return e === "ejecucion" || e === "devuelta";   // una OT devuelta vuelve a manos del técnico
   return e === S.filtro;
 }
 
@@ -255,7 +256,7 @@ function render(){
   try { if (actId && act.selectionStart != null) sel = [act.selectionStart, act.selectionEnd]; } catch(e){}
 
   const jefe = S.admin || S.control;
-  const peso = jefe ? {revision:0, devuelta:1, asignada:2, cerrada:3} : {devuelta:0, asignada:1, revision:2, cerrada:3};
+  const peso = jefe ? {revision:0, devuelta:1, ejecucion:2, asignada:3, cerrada:4} : {devuelta:0, ejecucion:1, asignada:2, revision:3, cerrada:4};
   ultimaFirma = firmaAlertas();
   const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (peso[a.estado]-peso[b.estado]) || (new Date(b.creada) - new Date(a.creada)));
   const enAlerta = jefe ? items.filter(o => nivelInc(o) > 0) : [];
@@ -266,12 +267,12 @@ function render(){
     ban.textContent = (enAlerta.length === 1 ? "1 incidencia lleva" : enAlerta.length + " incidencias llevan") + " más de " + ALERTA_INC_H + " horas sin cerrar" +
       (venc ? "; " + (venc === 1 ? "1 ya superó" : venc + " ya superaron") + " el plazo de " + PLAZO_INC_H + " horas." : ".");
   }
-  const cuenta = {todas:items.length, pendientes:0, revision:0, cerrada:0};
+  const cuenta = {todas:items.length, pendientes:0, ejecucion:0, revision:0, cerrada:0};
   for (const o of items){
-    if (o.estado === "asignada" || o.estado === "devuelta") cuenta.pendientes++; else cuenta[o.estado]++;
+    if (o.estado === "asignada") cuenta.pendientes++; else if (o.estado === "devuelta") cuenta.ejecucion++; else cuenta[o.estado]++;
   }
   const f = $("filtros"); f.replaceChildren();
-  const rotulos = [["todas","Todas"],["pendientes", jefe ? "En terreno" : "Por hacer"],
+  const rotulos = [["todas","Todas"],["pendientes", jefe ? "Sin aceptar" : "Por aceptar"],["ejecucion","En ejecución"],
                    ["revision", jefe ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]];
   for (const [k, t] of rotulos){
     f.append(h("button", {class:"filtro", type:"button", id:"f-"+k, "aria-pressed": String(S.filtro===k),
@@ -295,14 +296,15 @@ function render(){
 
 function bloque(rot, ...kids){ return h("div", {class:"bloque"}, h("span", {class:"rot"}, rot), ...kids); }
 
-function imagen(o){
-  if (!o.tiene_foto) return h("p", {class:"nota"}, "Sin foto.");
-  const k = o.id + "|" + (o.enviado || "");
-  if (S.fotos[k]) return h("img", {class:"foto", alt:"Foto del trabajo realizado", src:S.fotos[k]});
+function claveFoto(o, n){ return o.id + "|" + (o.enviado || "") + (n === 2 ? "|2" : ""); }
+function imagen(o, n){
+  if (!(n === 2 ? o.tiene_foto2 : o.tiene_foto)) return h("p", {class:"nota"}, "Sin foto.");
+  const k = claveFoto(o, n);
+  if (S.fotos[k]) return h("img", {class:"foto", alt:(n === 2 ? "Segunda foto" : "Foto") + " del trabajo realizado", src:S.fotos[k]});
   if (S.fotos[k] === "") return h("p", {class:"nota"}, "La foto no se pudo cargar.");
   if (!S.pidiendoFoto[k]){
     S.pidiendoFoto[k] = true;
-    rpc("ot_foto", {p_token:S.token, p_ot:o.id})
+    rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n === 2 ? 2 : 1})
       .then(d => { S.fotos[k] = (typeof d === "string" && d.startsWith("data:image/")) ? d : ""; })
       .catch(() => { S.fotos[k] = ""; })
       .then(() => { delete S.pidiendoFoto[k]; if (!$("v-app").hidden) render(); });
@@ -312,7 +314,7 @@ function imagen(o){
 
 function tarjeta(o){
   const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", jefe = S.admin || S.control;
-  const necesitaAccion = (jefe && inc && estado !== "cerrada") || (S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "devuelta"));
+  const necesitaAccion = (jefe && inc && estado !== "cerrada") || (S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "ejecucion" || estado === "devuelta"));
   const nivel = nivelInc(o), roja = jefe && nivel > 0;
   const rotEstado = roja ? (nivel === 2 ? "Plazo vencido" : "Sin cerrar hace " + Math.floor(horasInc(o)) + " h")
     : inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
@@ -338,6 +340,7 @@ function tarjeta(o){
   if (o.cantidad != null) cuerpo.append(bloque("Cantidad programada", h("p", {class:"cod"}, cantTxt(o.cantidad) + " " + (o.unidad || "UN"))));
   cuerpo.append(bloque(inc ? "Qué está pasando" : "Detalle del trabajo", h("p", null, o.detalle)));
   cuerpo.append(h("p", {class:"nota"}, inc ? "Informada el " + fecha(o.creada) + (o.creada_por ? " por " + o.creada_por : "") : "Asignada el " + fecha(o.creada)));
+  if (o.aceptada) cuerpo.append(h("p", {class:"nota"}, "Aceptada el " + fecha(o.aceptada) + ", " + horasTxt(horasEntre(o.creada, o.aceptada)) + " después de " + (inc ? "informada" : "asignada") + "."));
   if (inc && estado !== "cerrada")
     cuerpo.append(h("p", {class: nivel ? "devol" : "nota"}, (nivel === 2 ? "Plazo vencido: había que cerrarla antes del " : "Plazo de " + PLAZO_INC_H + " horas: hay que cerrarla antes del ") + fecha(plazoInc(o)) + "."));
   if (inc && estado === "cerrada" && o.cerrada)
@@ -345,16 +348,23 @@ function tarjeta(o){
   if (estado === "devuelta" && o.nota_devolucion)
     cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), o.nota_devolucion));
 
-  const editable = !jefe && (estado === "asignada" || estado === "devuelta");
+  const editable = !jefe && (estado === "ejecucion" || estado === "devuelta");
   if (o.enviado && !editable){
     cuerpo.append(h("div", {class:"lista"},
       inc ? null : bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
       bloque(inc ? "Cómo se resolvió" : "Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
-      bloque("Foto", imagen(o)),
+      bloque(o.tiene_foto2 ? "Fotos" : "Foto", h("div", {class:"fotos"}, imagen(o, 1), o.tiene_foto2 ? imagen(o, 2) : null)),
       h("p", {class:"nota"}, (inc ? "Cierre informado el " : "Reporte enviado el ") + fecha(o.enviado))));
   }
   if (jefe && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, inc ? "Reabierta. Esperando que el técnico la cierre otra vez." : "Esperando que el técnico corrija y reenvíe."));
-  if (jefe && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, inc ? "El técnico de turno aún no la cierra." : "El técnico aún no envía su reporte."));
+  if (jefe && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, inc ? "El técnico de turno aún no la acepta." : "El técnico aún no acepta la OT."));
+  if (jefe && estado === "ejecucion") cuerpo.append(h("p", {class:"nota"}, inc ? "En ejecución: el técnico de turno la aceptó y aún no la cierra." : "En ejecución: el técnico la aceptó y aún no envía su reporte."));
+  if (!jefe && estado === "asignada"){
+    cuerpo.append(h("div", {class:"acciones"},
+      h("button", {class:"btn principal", type:"button", id:"ace-"+id, disabled:!!S.ocupado[id],
+        onclick: () => accion(id, "ot_aceptar", {p_ot:id}, () => { S.abiertos[id] = true; })}, S.ocupado[id] ? "Aceptando…" : inc ? "Aceptar incidencia" : "Aceptar OT"),
+      h("span", {class:"nota"}, "Al aceptarla queda en ejecución y podrás " + (inc ? "cerrarla." : "enviar tu reporte."))));
+  }
   if (editable) cuerpo.append(formReporte(o));
   if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
   if (estado === "cerrada")
@@ -374,9 +384,10 @@ function tarjeta(o){
 
 function formReporte(o){
   const id = o.id, inc = o.tipo === "incidencia";
-  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null});
+  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null, file2:null, vista2:null});
   const ocupado = !!S.ocupado[id];
-  const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o) : null;
+  const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o, 1) : null;
+  const prev2 = b.vista2 ? h("img", {class:"foto", alt:"Segunda foto seleccionada", src:b.vista2}) : o.tiene_foto2 ? imagen(o, 2) : null;
   const selCod = h("select", {id:"cod-"+id, required:true, onchange: ev => { b.codigo = ev.target.value; }});
   opcionesActividad(selCod, b.codigo);
   return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarReporte(o); }},
@@ -394,6 +405,15 @@ function formReporte(o){
           b.file = file; b.vista = URL.createObjectURL(file); render();
         }})),
     prev,
+    h("label", {for:"fo2-"+id}, prev2 ? "Cambiar segunda foto" : "Segunda foto (opcional)",
+      h("input", {id:"fo2-"+id, type:"file", accept:"image/*",
+        onchange: ev => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          if (b.vista2) URL.revokeObjectURL(b.vista2);
+          b.file2 = file; b.vista2 = URL.createObjectURL(file); render();
+        }})),
+    prev2,
     h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"submit", id:"env-"+id, disabled:ocupado},
         ocupado ? "Enviando…" : inc ? "Cerrar incidencia" : o.enviado ? "Reenviar reporte" : "Enviar reporte")));
@@ -471,13 +491,14 @@ async function enviarReporte(o){
   if (!inc && !b.file && !o.tiene_foto){ S.errores[id] = "Agrega una foto del trabajo antes de enviar."; render(); return; }
   S.ocupado[id] = true; delete S.errores[id]; render();
   try {
-    let foto = null;
-    if (b.file){
-      try { foto = await prepararFoto(b.file); }
-      catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
-    }
-    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_foto:foto});
+    let foto = null, foto2 = null;
+    try {
+      if (b.file) foto = await prepararFoto(b.file);
+      if (b.file2) foto2 = await prepararFoto(b.file2);
+    } catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
+    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_foto:foto, p_foto2:foto2});
     if (b.vista) URL.revokeObjectURL(b.vista);
+    if (b.vista2) URL.revokeObjectURL(b.vista2);
     delete S.borradores[id]; delete S.abiertos[id];
   } catch (e){ S.errores[id] = e.message; }
   delete S.ocupado[id];
@@ -728,6 +749,12 @@ function renderReportes(){
   const abiertas = S.ordenes.filter(o => o.tipo !== "incidencia" && !hecha(o));
   const incs = S.ordenes.filter(o => o.tipo === "incidencia" && isoLocal(o.creada).slice(0,7) === mes), incHechas = incs.filter(hecha);
   const horasOt = lista => prom(lista.filter(o => o.enviado).map(o => horasEntre(o.creada, o.enviado)));
+  // Tiempos por etapa: solo cuentan las OT que el técnico aceptó con el botón (las anteriores no tienen esa hora).
+  const tAceptar = lista => prom(lista.filter(o => o.aceptada).map(o => horasEntre(o.creada, o.aceptada)));
+  const tEjecutar = lista => prom(lista.filter(o => o.aceptada && o.enviado && hecha(o)).map(o => horasEntre(o.aceptada, o.enviado)));
+  const tCerrar = lista => prom(lista.filter(o => o.enviado && o.cerrada && o.estado === "cerrada").map(o => horasEntre(o.enviado, o.cerrada)));
+  const tTotal = lista => prom(lista.filter(o => o.cerrada && o.estado === "cerrada").map(o => horasEntre(o.creada, o.cerrada)));
+  const enEjec = S.ordenes.filter(o => o.estado === "ejecucion");
 
   caja.append(h("div", {class:"tiles"},
     tile("Cumplimiento preventivo, " + mesTxt(mes).toLowerCase(), pct(prevHechos, prevMes.length), prevHechos + " de " + prevMes.length + " preventivos realizados", true),
@@ -736,6 +763,15 @@ function renderReportes(){
     tile("OT abiertas ahora", String(abiertas.length), abiertas.length ? "antigüedad promedio " + horasTxt(prom(abiertas.map(o => horasEntre(o.creada, Date.now())))) : "nada pendiente"),
     tile("Incidencias atendidas", incHechas.length + " de " + incs.length, incHechas.length ? "cierre promedio en " + horasTxt(prom(incHechas.map(o => horasEntre(o.creada, o.cerrada)))) : "sin cierres en el mes"),
     tile("Alertas", String(alertas.length), alertas.length ? "revísalas más abajo" : "sin trabajos vencidos")));
+
+  caja.append(h("h3", null, "Tiempos de las OT, " + mesTxt(mes).toLowerCase()));
+  caja.append(h("div", {class:"tiles"},
+    tile("Espera hasta aceptar", horasTxt(tAceptar(ots)), "desde que se crea la OT hasta que el técnico la acepta"),
+    tile("Tiempo en ejecución", horasTxt(tEjecutar(ots)), "desde que la acepta hasta que envía su reporte"),
+    tile("Espera hasta el cierre", horasTxt(tCerrar(ots)), "desde el reporte hasta que la cierras"),
+    tile("Total, de creada a cerrada", horasTxt(tTotal(ots)), "promedio de las OT cerradas del mes"),
+    tile("En ejecución ahora", String(enEjec.length), enEjec.length ? "aceptadas y sin reporte todavía" : "ninguna en este momento"),
+    tile("Incidencias: espera hasta aceptar", horasTxt(tAceptar(incs)), "desde que se informa hasta que el técnico de turno la acepta")));
 
   caja.append(h("h3", null, "Alertas"));
   if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar ni incidencias abiertas hace más de 12 horas."));
@@ -773,7 +809,7 @@ function renderReportes(){
     const mInc = incs.filter(o => o.trabajador === t), mIncH = mInc.filter(hecha);
     return {t, asignadas:mias.length + porGenerar.filter(p => p.tecnico === t).length, hechas:mh.length,
       aTiempo:conPlazo.length ? pct(conPlazo.filter(o => isoLocal(o.enviado) <= o.fecha_limite).length, conPlazo.length) : "—",
-      horas:horasTxt(horasOt(mh)), devueltas:mias.filter(o => o.nota_devolucion).length,
+      horas:horasTxt(horasOt(mh)), acepta:horasTxt(tAceptar(mias)), ejecuta:horasTxt(tEjecutar(mias)), devueltas:mias.filter(o => o.nota_devolucion).length,
       inc:mIncH.length + " de " + mInc.length, horasInc:horasTxt(prom(mIncH.map(o => horasEntre(o.creada, o.cerrada))))};
   });
   caja.append(h("h3", null, "Rendimiento por técnico, " + mesTxt(mes).toLowerCase()));
@@ -783,8 +819,8 @@ function renderReportes(){
       h("span", {class:"med-n"}, r.t),
       h("div", {class:"meter", role:"img", "aria-label": r.t + ": " + r.hechas + " de " + r.asignadas + " OT realizadas"}, h("i", {style:"width:" + (r.asignadas ? Math.min(100, 100 * r.hechas / r.asignadas) : 0) + "%"})),
       h("span", {class:"med-v"}, r.asignadas ? r.hechas + " de " + r.asignadas + " (" + pct(r.hechas, r.asignadas) + ")" : "sin OT")))));
-    caja.append(tabla(["Técnico", "OT asignadas", "Realizadas", "Cumplimiento", "A tiempo", "Horas promedio abiertas", "Devueltas", "Incidencias atendidas", "Cierre promedio de incidencia"],
-      rend.map(r => [r.t, r.asignadas, r.hechas, pct(r.hechas, r.asignadas), r.aTiempo, r.horas, r.devueltas, r.inc, r.horasInc]), ""));
+    caja.append(tabla(["Técnico", "OT asignadas", "Realizadas", "Cumplimiento", "A tiempo", "Espera hasta aceptar", "Tiempo en ejecución", "Horas promedio abiertas", "Devueltas", "Incidencias atendidas", "Cierre promedio de incidencia"],
+      rend.map(r => [r.t, r.asignadas, r.hechas, pct(r.hechas, r.asignadas), r.aTiempo, r.acepta, r.ejecuta, r.horas, r.devueltas, r.inc, r.horasInc]), ""));
   }
 
   // Incidencias por centro de control en el mes.
@@ -802,17 +838,17 @@ function renderReportes(){
     filasCump(sem, k => "Semana " + semanaIso(k) + " (" + fechaCorta(k) + " al " + fechaCorta(sumarIso(k, 6)) + ")"), "Todavía no hay trabajos preventivos programados hasta esta semana."));
   caja.append(h("h3", null, "Cumplimiento preventivo mensual"));
   caja.append(tabla(["Mes", "Programados", "Realizados", "Pendientes", "Cumplimiento"], filasCump(meses, mesTxt), "Todavía no hay trabajos preventivos programados hasta este mes."));
-  caja.append(h("p", {class:"nota"}, "Un trabajo cuenta como realizado cuando el técnico envió su reporte, aunque todavía no lo hayas cerrado. Las horas abiertas van desde que la OT se asigna hasta ese reporte. Cada OT pertenece al mes de su fecha límite, o al de su creación si no tiene. El mes en curso incluye lo programado para los días que faltan."));
+  caja.append(h("p", {class:"nota"}, "Un trabajo cuenta como realizado cuando el técnico envió su reporte, aunque todavía no lo hayas cerrado. Las horas abiertas van desde que la OT se asigna hasta ese reporte. Los tiempos por etapa solo cuentan las OT aceptadas con el botón Aceptar. Cada OT pertenece al mes de su fecha límite, o al de su creación si no tiene. El mes en curso incluye lo programado para los días que faltan."));
 }
 $("r-mes").addEventListener("change", () => { $("inf-enlaces").replaceChildren(); $("inf-estado").textContent = ""; renderReportes(); });
 
 /* ---------- informe mensual con fotos ---------- */
 function esc(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function aDataUrl(blob){ return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(blob); }); }
-async function fotoDe(o){
-  const k = o.id + "|" + (o.enviado || "");
+async function fotoDe(o, n){
+  const k = claveFoto(o, n);
   if (S.fotos[k]) return S.fotos[k];
-  try { const d = await rpc("ot_foto", {p_token:S.token, p_ot:o.id}); if (typeof d === "string" && d.startsWith("data:image/")) return d; } catch (e){}
+  try { const d = await rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n === 2 ? 2 : 1}); if (typeof d === "string" && d.startsWith("data:image/")) return d; } catch (e){}
   return "";
 }
 let urlInforme = null;
@@ -825,9 +861,9 @@ async function generarInforme(){
   btn.disabled = true;
   try {
     // Fotos: de a cuatro a la vez, mostrando el avance.
-    const conFoto = trabajos.filter(o => o.tiene_foto), fotos = {};
+    const conFoto = trabajos.flatMap(o => [o.tiene_foto ? [o, 1] : null, o.tiene_foto2 ? [o, 2] : null].filter(Boolean)), fotos = {};
     let listas = 0, sig = 0;
-    const obrero = async () => { while (sig < conFoto.length){ const o = conFoto[sig++]; fotos[o.id] = await fotoDe(o); listas++; est.textContent = "Cargando fotos: " + listas + " de " + conFoto.length + "…"; } };
+    const obrero = async () => { while (sig < conFoto.length){ const [o, n] = conFoto[sig++]; fotos[o.id + "|" + n] = await fotoDe(o, n); listas++; est.textContent = "Cargando fotos: " + listas + " de " + conFoto.length + "…"; } };
     est.textContent = conFoto.length ? "Cargando fotos: 0 de " + conFoto.length + "…" : "Armando el informe…";
     await Promise.all([obrero(), obrero(), obrero(), obrero()]);
     let logo = "";
@@ -836,18 +872,19 @@ async function generarInforme(){
     const ots = trabajos.filter(o => o.tipo !== "incidencia"), incs = trabajos.filter(o => o.tipo === "incidencia");
     const tecnicos = [...new Set(trabajos.map(o => o.trabajador))].sort();
     const numero = o => (o.tipo === "incidencia" ? "INC-" : "OT-") + String(o.numero || 0).padStart(4,"0");
-    const estadoTxt = o => hecha(o) ? (o.estado === "cerrada" ? "Cerrada" : "Realizada, por revisar") : (o.tipo === "incidencia" ? "Abierta" : "No realizada");
+    const estadoTxt = o => hecha(o) ? (o.estado === "cerrada" ? "Cerrada" : "Realizada, por revisar") : o.estado === "ejecucion" ? "En ejecución" : (o.tipo === "incidencia" ? "Abierta" : "No realizada");
     const fila = (r, v) => v ? "<tr><th>" + esc(r) + "</th><td>" + esc(v) + "</td></tr>" : "";
     const bloques = trabajos.map(o => {
-      const inc = o.tipo === "incidencia", f = fotos[o.id];
+      const inc = o.tipo === "incidencia", f = fotos[o.id + "|1"], f2 = fotos[o.id + "|2"];
       return '<section class="trabajo"><h3>' + esc(numero(o)) + " · " + esc(inc ? "Incidencia fuera de horario" : (o.actividad || o.titulo)) + ' <span class="est' + (hecha(o) ? "" : " no") + '">' + esc(estadoTxt(o)) + "</span></h3><table>" +
         fila("Técnico", o.trabajador) + fila(inc ? "Informada por" : "", inc ? o.creada_por : "") + fila("Trabajo", inc ? "" : o.titulo) +
-        fila(inc ? "Informada el" : "Asignada el", fecha(o.creada)) + fila("Fecha programada", o.fecha_limite ? fechaCorta(o.fecha_limite) : "") +
+        fila(inc ? "Informada el" : "Asignada el", fecha(o.creada)) + fila("Aceptada el", o.aceptada ? fecha(o.aceptada) : "") + fila("Fecha programada", o.fecha_limite ? fechaCorta(o.fecha_limite) : "") +
         fila("Origen", o.origen === "plan" ? "Plan preventivo" : o.origen === "ronda" ? "Ronda automática del turno de emergencia" : "") + fila("Cantidad programada", o.cantidad != null ? cantTxt(o.cantidad) + " " + (o.unidad || "UN") : "") +
         fila("Ubicación", o.ubicacion) + fila(inc ? "Qué pasó" : "Detalle", o.detalle) +
         fila("Código informado", inc ? "" : o.codigo_actividad) + fila(inc ? "Cómo se resolvió" : "Trabajo realizado", o.descripcion_realizada) +
         fila(inc ? "Cerrada el" : "Reporte enviado el", o.enviado ? fecha(o.enviado) : "") + fila(inc ? "" : "Cerrada el", !inc && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de cierre", o.nota_cierre) +
-        "</table>" + (f ? '<img src="' + f + '" alt="Foto del trabajo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") + "</section>";
+        "</table>" + (f ? '<img src="' + f + '" alt="Foto del trabajo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
+        (f2 ? '<img src="' + f2 + '" alt="Segunda foto del trabajo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
     }).join("");
     const resumen = tecnicos.map(t => {
       const m = ots.filter(o => o.trabajador === t), mi = incs.filter(o => o.trabajador === t);
@@ -871,7 +908,7 @@ async function generarInforme(){
       '<p class="pie">Informe generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". Incluye las OT e incidencias programadas o realizadas en " + esc(mesTxt(mes).toLowerCase()) + ".</p></main></body></html>";
     if (urlInforme) URL.revokeObjectURL(urlInforme);
     urlInforme = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
-    const sinFoto = conFoto.filter(o => !fotos[o.id]).length;
+    const sinFoto = conFoto.filter(([o, n]) => !fotos[o.id + "|" + n]).length;
     est.textContent = "Informe listo: " + trabajos.length + " trabajos, " + (conFoto.length - sinFoto) + " fotos." + (sinFoto ? " " + sinFoto + " fotos no se pudieron cargar." : "");
     enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener"}, "Abrir informe"),
       h("a", {class:"btn", href:urlInforme, download:"Informe_trabajos_" + mes + ".html"}, "Descargar archivo"));

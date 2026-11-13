@@ -3,7 +3,8 @@
 Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada persona ingresa con usuario y contraseña.
 
 - El administrador crea la OT y la asigna a un técnico.
-- El técnico ve solo sus OT, escribe el código de actividad y la descripción del trabajo realizado, y sube una foto.
+- El técnico ve solo sus OT y las acepta con el botón **Aceptar OT**: desde ese momento la OT queda **En ejecución**.
+- Al terminar, escribe el código de actividad y la descripción del trabajo realizado, y sube una foto (puede agregar una segunda).
 - El administrador revisa el reporte y cierra la OT, o la devuelve con una nota.
 
 ## Cuentas iniciales
@@ -33,7 +34,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados cuentan completos como fuera de horario: vienen cargados los que quedan de 2026 y el administrador agrega los siguientes en la sección **Feriados**.
 - Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.
-- El técnico de turno la cierra describiendo cómo se resolvió (foto opcional). El centro de control y el administrador ven ese cierre.
+- El técnico de turno la acepta (queda En ejecución) y luego la cierra describiendo cómo se resolvió (hasta dos fotos, opcionales). El centro de control y el administrador ven ese cierre.
 
 ## Ronda de luminarias
 
@@ -45,6 +46,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 ## Panel del administrador
 
 - El administrador navega por pestañas: Órdenes, Panel, Plan preventivo, Equipo y turnos, y Ajustes.
+- El **Panel** muestra los tiempos de las OT por etapa (espera hasta aceptar, tiempo en ejecución, espera hasta el cierre y total). Solo cuentan las OT aceptadas con el botón.
 - El **Panel** muestra, para el mes elegido: cumplimiento preventivo, OT realizadas, horas promedio que las OT pasan abiertas, OT abiertas, incidencias atendidas, alertas, gráficos por día y por semana, y el rendimiento de cada técnico.
 - **Generar informe del mes con fotos** arma un documento con todos los trabajos del mes y sus fotos. Se abre en el navegador, desde donde se imprime o se guarda como PDF, y también se puede descargar como archivo.
 
@@ -63,6 +65,6 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 ## Notas
 
-- Las fotos se guardan reducidas dentro de la base de datos. El plan gratuito de Supabase alcanza para unas 1.500 fotos; después hay que eliminar OT antiguas o pasar a un plan pagado.
+- Las fotos se guardan reducidas dentro de la base de datos. El plan gratuito de Supabase alcanza para unas 1.500 fotos (cada OT puede llevar dos); después hay que eliminar OT antiguas o pasar a un plan pagado.
 - La página se actualiza sola cada 30 segundos. No envía avisos por correo ni al teléfono.
 - Nunca pongas en `config.js` la clave `secret` o `service_role` de Supabase: solo la `publishable`.

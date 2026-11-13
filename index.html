@@ -13,7 +13,7 @@
 :root{
   --fondo:#f1f6f9; --panel:#ffffff; --tinta:#002d57; --tenue:#4f6478; --linea:#cfdde6;
   --acento:#01add3; --boton:#002d57; --boton-tinta:#ffffff; --campo:#f6fafc;
-  --ok:#1f7a4d; --aviso:#a86400; --alerta:#b3261e; --info:#0b7fa0;
+  --ok:#1f7a4d; --aviso:#a86400; --alerta:#b3261e; --info:#0b7fa0; --ejec:#6b4fbb;
   --serie:#2a78d6; --contexto:#c3c2b7; --pista:#cde2fb;
   --display:"Albert Sans","Segoe UI",system-ui,sans-serif;
   --cuerpo:"Albert Sans","Segoe UI",system-ui,sans-serif;
@@ -24,7 +24,7 @@
     --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
     --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
     --serie:#3987e5; --contexto:#52657a; --pista:#104281;
-    --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
+    --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee; --ejec:#b9a4ff;
   }
 }
 :root[data-theme="dark"]{
@@ -32,7 +32,7 @@
   --fondo:#041a30; --panel:#0a2744; --tinta:#e6f1f7; --tenue:#93abc0; --linea:#1d4266;
   --acento:#01add3; --boton:#01add3; --boton-tinta:#00213f; --campo:#06203a;
     --serie:#3987e5; --contexto:#52657a; --pista:#104281;
-  --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee;
+  --ok:#5ec691; --aviso:#f0b24a; --alerta:#ff8a80; --info:#5fd0ee; --ejec:#b9a4ff;
 }
 *{box-sizing:border-box}
 html,body{margin:0}
@@ -58,8 +58,8 @@ p{margin:0}
 .mensaje.bien{border-color:var(--ok)}
 [hidden]{display:none!important}
 
-.filtros{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-@media (max-width:480px){.filtros{grid-template-columns:repeat(2,1fr)}}
+.filtros{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+@media (max-width:640px){.filtros{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}}
 .filtro{background:var(--panel);border:1px solid var(--linea);border-radius:6px;padding:8px 10px;text-align:left;color:var(--tinta);font:inherit;cursor:pointer;display:flex;flex-direction:column}
 .filtro b{font:700 1.6rem/1.1 var(--display);color:var(--acento);font-variant-numeric:tabular-nums}
 .filtro span{font-size:.85rem;color:var(--tenue)}
@@ -80,6 +80,7 @@ button.btn:disabled{opacity:.55;cursor:default}
 .lista{display:flex;flex-direction:column;gap:10px}
 .ot{background:var(--panel);border:1px solid var(--linea);border-left:6px solid var(--tenue);border-radius:6px}
 .ot.e-asignada{border-left-color:var(--info)}
+.ot.e-ejecucion{border-left-color:var(--ejec)}
 .ot.e-devuelta{border-left-color:var(--alerta)}
 .ot.e-revision{border-left-color:var(--aviso)}
 .ot.e-cerrada{border-left-color:var(--ok)}
@@ -89,7 +90,7 @@ button.btn:disabled{opacity:.55;cursor:default}
 .ot-linea{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .num{font:700 1rem/1 var(--display);letter-spacing:.02em;color:var(--info);font-variant-numeric:tabular-nums}
 .pill{font-size:.8rem;font-weight:600;border:1px solid currentColor;border-radius:99px;padding:1px 9px;white-space:nowrap}
-.pill.e-asignada{color:var(--info)} .pill.e-devuelta{color:var(--alerta)}
+.pill.e-asignada{color:var(--info)} .pill.e-ejecucion{color:var(--ejec)} .pill.e-devuelta{color:var(--alerta)}
 .pill.e-revision{color:var(--aviso)} .pill.e-cerrada{color:var(--ok)}
 .meta{color:var(--tenue);font-size:.88rem;display:flex;flex-wrap:wrap;gap:2px 14px}
 .meta .vencida{color:var(--alerta);font-weight:600}
@@ -98,6 +99,8 @@ button.btn:disabled{opacity:.55;cursor:default}
 .bloque .rot{font:700 .78rem var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--tenue)}
 .bloque p{white-space:pre-wrap;overflow-wrap:anywhere;max-width:65ch}
 .cod{font-weight:600;font-variant-numeric:tabular-nums}
+.fotos{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
+.fotos .foto{max-width:min(100%,420px)}
 .foto{max-width:100%;max-height:420px;border-radius:4px;border:1px solid var(--linea);display:block}
 .devol{border-left:4px solid var(--alerta);padding:6px 10px;background:var(--campo)}
 .equipo-fila{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
@@ -407,8 +410,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=11"></script>
-<script src="calendario.js?v=11"></script>
-<script src="app.js?v=11"></script>
+<script src="config.js?v=12"></script>
+<script src="calendario.js?v=12"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
