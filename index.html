@@ -249,6 +249,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
         <label for="n-act">Código de actividad
           <select id="n-act" required></select>
         </label>
+        <label for="n-act-otro" id="n-act-otro-caja" hidden>Código nuevo de actividad
+          <input id="n-act-otro" maxlength="100" placeholder="Ej.: Apoyo a obra externa">
+        </label>
         <label for="n-detalle">Detalle del trabajo
           <textarea id="n-detalle" required maxlength="4000" placeholder="Qué hay que hacer, materiales, medidas de seguridad…"></textarea>
         </label>
@@ -410,8 +413,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=12"></script>
-<script src="calendario.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="config.js?v=13"></script>
+<script src="calendario.js?v=13"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

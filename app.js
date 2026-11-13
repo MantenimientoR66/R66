@@ -584,8 +584,13 @@ $("form-nueva").addEventListener("submit", async ev => {
   ev.preventDefault();
   const wid = $("n-trab").value, btn = $("n-enviar"), est = $("n-estado");
   if (!wid){ est.textContent = "Elige un técnico."; return; }
-  const act = $("n-act").value;
+  let act = $("n-act").value;
   if (!act){ est.textContent = "Elige el código de actividad."; return; }
+  if (act === OTROS){
+    const nuevo = $("n-act-otro").value.trim().replace(/\s+/g, " ");
+    if (!nuevo){ est.textContent = "Escribe el código nuevo de actividad."; $("n-act-otro").focus(); return; }
+    act = "Otros · " + nuevo;
+  }
   btn.disabled = true; est.textContent = "Guardando…";
   try {
     const n = await rpc("ot_crear", {p_token:S.token, p_trabajador:wid, p_actividad:act, p_titulo:$("n-titulo").value, p_detalle:$("n-detalle").value,
@@ -593,13 +598,21 @@ $("form-nueva").addEventListener("submit", async ev => {
     const t = S.trabajadores.find(x => x.id === wid);
     est.textContent = numTxt(n) + " asignada" + (t ? " a " + t.nombre : "") + ".";
     for (const k of ["n-titulo","n-detalle","n-lugar","n-fecha"]) $(k).value = "";
-    $("n-prio").value = "Normal"; $("n-act").value = "";
+    $("n-prio").value = "Normal"; $("n-act").value = ""; $("n-act-otro").value = ""; $("n-act-otro-caja").hidden = true;
     await cargar();
   } catch (e){ est.textContent = e.message; }
   btn.disabled = false;
 });
 
+// "Otros": el administrador escribe a mano un código de actividad que no está en la lista.
+const OTROS = "__otros__";
 opcionesActividad($("n-act"), "");
+$("n-act").append(h("option", {value:OTROS}, "Otros (escribir un código nuevo)"));
+$("n-act").addEventListener("change", () => {
+  const otro = $("n-act").value === OTROS;
+  $("n-act-otro-caja").hidden = !otro;
+  if (otro) $("n-act-otro").focus();
+});
 
 /* ---------- incidencias (centro de control) ---------- */
 function renderIncidencia(){
