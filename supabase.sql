@@ -159,6 +159,33 @@ insert into public.ajustes(clave, valor)
   values ('flujo_desde', to_char(now() at time zone 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS'))
   on conflict (clave) do nothing;
 
+-- Horas extras. 'turno' = las que recibe sola la persona de turno de emergencia; 'manual' = las que agrega el técnico.
+create table if not exists public.horas_extras (
+  id uuid primary key default gen_random_uuid(),
+  trabajador_id uuid not null references public.usuarios(id),
+  fecha date not null,
+  horas numeric not null check (horas > 0 and horas <= 24),
+  tipo text not null default 'manual' check (tipo in ('turno','manual')),
+  descripcion text not null default '',
+  creado timestamptz not null default now()
+);
+create index if not exists horas_extras_fecha on public.horas_extras(fecha);
+-- Días que ya recibieron sus horas de turno (para no repetirlas, ni recrearlas si el administrador las quita).
+create table if not exists public.horas_turno_dias (
+  fecha date primary key,
+  generada timestamptz not null default now()
+);
+alter table public.horas_extras enable row level security;
+alter table public.horas_turno_dias enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.horas_extras, public.horas_turno_dias from anon, authenticated;
+  end if;
+end $$;
+-- Las horas de turno se cuentan desde el período que parte el 11-11-2026.
+insert into public.ajustes(clave, valor) values ('horas_desde', '2026-11-11') on conflict (clave) do nothing;
+
 -- Turnos de emergencia asignados a mano por calendario. 'viernes' es el viernes en que parte el turno.
 -- La asignación manual manda sobre la rotación automática; si se quita, ese turno vuelve a la rotación.
 create table if not exists public.turnos_manual (
@@ -616,6 +643,97 @@ begin
   return n;
 end $$;
 
+-- ---------- horas extras ----------
+-- Los períodos van del día 11 de un mes al día 10 del siguiente.
+
+-- Día 11 en que parte el período que contiene la fecha dada.
+create or replace function public.ot_periodo_inicio(p_dia date) returns date
+language sql immutable as $$
+  select case when extract(day from p_dia) >= 11 then date_trunc('month', p_dia)::date + 10
+              else (date_trunc('month', p_dia) - interval '1 month')::date + 10 end;
+$$;
+
+-- Da las horas de turno de cada día a quien está de turno de emergencia a las 18:30 de ese día (hora de Chile):
+-- 2 horas de lunes a viernes y 6 horas los sábados, domingos y feriados. El viernes cuenta para quien entra a turno.
+create or replace function public.ot_generar_horas_turno() returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare ahora timestamp := now() at time zone 'America/Santiago'; desde date; d date; momento timestamp;
+  libre boolean; tec uuid; c int; n int := 0;
+begin
+  select valor::date into desde from public.ajustes where clave = 'horas_desde';
+  if desde is null then return 0; end if;
+  for d in select g::date from generate_series(greatest(desde, ahora::date - 40)::timestamp, ahora::date::timestamp, interval '1 day') g loop
+    momento := d + time '18:30';
+    continue when momento > ahora;
+    continue when exists (select 1 from public.horas_turno_dias where fecha = d);
+    tec := public.ot_turno_de(public.ot_turno_inicio(momento));
+    continue when tec is null;
+    insert into public.horas_turno_dias(fecha) values (d) on conflict (fecha) do nothing;
+    get diagnostics c = row_count;
+    continue when c = 0;
+    libre := extract(isodow from d) >= 6 or exists (select 1 from public.feriados where fecha = d);
+    insert into public.horas_extras(trabajador_id, fecha, horas, tipo, descripcion)
+      values (tec, d, case when libre then 6 else 2 end, 'turno',
+              case when libre then 'Turno de emergencia (fin de semana o feriado)' else 'Turno de emergencia (día de semana)' end);
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Horas extras entre dos fechas: el administrador ve las de todos; cada técnico, solo las suyas.
+create or replace function public.ot_horas_listar(p_token text, p_desde date, p_hasta date) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; r jsonb;
+begin
+  u := public.ot_quien(p_token);
+  perform public.ot_generar_horas_turno();
+  select coalesce(jsonb_agg(jsonb_build_object('id', h.id, 'fecha', h.fecha, 'trabajador_id', h.trabajador_id, 'trabajador', t.nombre,
+      'horas', h.horas, 'tipo', h.tipo, 'descripcion', h.descripcion, 'creado', h.creado)
+      order by h.fecha, t.nombre, h.creado), '[]'::jsonb) into r
+    from public.horas_extras h join public.usuarios t on t.id = h.trabajador_id
+   where h.fecha between p_desde and p_hasta and (u.rol = 'admin' or h.trabajador_id = u.id);
+  return r;
+end $$;
+
+-- El técnico agrega horas de trabajos fuera del horario hábil, con su descripción, dentro del período en curso.
+-- El administrador puede agregarlas para cualquier técnico y fecha (por ejemplo, para corregir un período).
+create or replace function public.ot_horas_agregar(p_token text, p_fecha date, p_horas numeric, p_descripcion text, p_trabajador uuid default null) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; hoy date := (now() at time zone 'America/Santiago')::date; quien uuid; d text := trim(coalesce(p_descripcion,''));
+begin
+  u := public.ot_quien(p_token);
+  if u.rol = 'admin' then
+    if not exists (select 1 from public.usuarios where id = p_trabajador and rol = 'trabajador') then raise exception 'Elige al técnico.'; end if;
+    quien := p_trabajador;
+  elsif u.rol = 'trabajador' then
+    quien := u.id;
+    if p_fecha < public.ot_periodo_inicio(hoy) then
+      raise exception 'Ese día pertenece a un período de horas extras que ya cerró. Pide al administrador que lo agregue.';
+    end if;
+  else
+    raise exception 'Solo los técnicos y el administrador pueden agregar horas extras.';
+  end if;
+  if p_fecha is null then raise exception 'Elige la fecha del trabajo.'; end if;
+  if p_fecha > hoy then raise exception 'La fecha no puede ser futura.'; end if;
+  if p_horas is null or p_horas <= 0 or p_horas > 24 then raise exception 'Escribe las horas trabajadas: un número mayor que 0 y hasta 24.'; end if;
+  if length(d) = 0 then raise exception 'Describe el trabajo que hiciste.'; end if;
+  insert into public.horas_extras(trabajador_id, fecha, horas, tipo, descripcion) values (quien, p_fecha, p_horas, 'manual', left(d, 1000));
+end $$;
+
+-- El administrador quita cualquier registro; el técnico, solo los que agregó a mano en el período en curso.
+create or replace function public.ot_horas_quitar(p_token text, p_id uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; hoy date := (now() at time zone 'America/Santiago')::date;
+begin
+  u := public.ot_quien(p_token);
+  if u.rol = 'admin' then
+    delete from public.horas_extras where id = p_id;
+  else
+    delete from public.horas_extras where id = p_id and trabajador_id = u.id and tipo = 'manual' and fecha >= public.ot_periodo_inicio(hoy);
+  end if;
+  if not found then raise exception 'No se puede quitar ese registro.'; end if;
+end $$;
+
 -- ---------- plan preventivo ----------
 
 -- Convierte en órdenes de trabajo las filas del plan cuya fecha ya llegó (hora de Chile).
@@ -688,6 +806,7 @@ begin
   perform public.ot_generar_plan();
   perform public.ot_generar_rondas();
   perform public.ot_generar_flujometros();
+  perform public.ot_generar_horas_turno();
   select coalesce(jsonb_agg(jsonb_build_object(
       'id', o.id, 'numero', o.numero, 'tipo', o.tipo, 'creada_por', c.nombre,
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
@@ -853,7 +972,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
+declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
@@ -875,7 +994,7 @@ end $$;
 do $$
 begin
   create extension if not exists pg_cron;
-  perform cron.schedule('ot-generar', '*/5 * * * *', 'select public.ot_generar_rondas(), public.ot_generar_flujometros(), public.ot_generar_plan()');
+  perform cron.schedule('ot-generar', '*/5 * * * *', 'select public.ot_generar_rondas(), public.ot_generar_flujometros(), public.ot_generar_horas_turno(), public.ot_generar_plan()');
 exception when others then
   raise notice 'pg_cron no está disponible (%): las OT automáticas se generan al abrir la página.', sqlerrm;
 end $$;

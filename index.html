@@ -229,6 +229,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       <button type="button" data-v="ordenes" aria-pressed="true">Órdenes</button>
       <button type="button" data-v="panel" id="nav-panel" aria-pressed="false">Panel</button>
       <button type="button" data-v="flujo" aria-pressed="false">Flujómetro</button>
+      <button type="button" data-v="horas" aria-pressed="false">Horas extras</button>
       <button type="button" data-v="plan" aria-pressed="false">Plan preventivo</button>
       <button type="button" data-v="equipo" aria-pressed="false">Equipo y turnos</button>
       <button type="button" data-v="ajustes" aria-pressed="false">Ajustes</button>
@@ -421,6 +422,41 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </details>
     </section>
 
+    <section class="panel" id="horas" hidden>
+      <h2>Horas extras</h2>
+      <p class="nota">Los períodos van del día 11 de cada mes al día 10 del mes siguiente. Quien está de turno de emergencia recibe solas 2 horas por cada día de semana y 6 horas por cada sábado, domingo o feriado. Los demás trabajos fuera del horario hábil se agregan aquí con su descripción.</p>
+      <div class="fila" style="align-items:end">
+        <label for="he-periodo">Período
+          <select id="he-periodo"></select>
+        </label>
+        <div class="acciones">
+          <button class="btn" type="button" id="he-excel" hidden>Descargar Excel del período</button>
+        </div>
+      </div>
+      <form id="form-he" class="lista" autocomplete="off">
+        <h3>Agregar horas de otro trabajo</h3>
+        <div class="fila">
+          <label for="he-trab" id="he-trab-caja" hidden>Técnico
+            <select id="he-trab"></select>
+          </label>
+          <label for="he-fecha">Fecha del trabajo
+            <input id="he-fecha" type="date" required>
+          </label>
+          <label for="he-horas">Horas trabajadas
+            <input id="he-horas" required inputmode="decimal" maxlength="5" placeholder="Ej.: 3 o 1,5">
+          </label>
+        </div>
+        <label for="he-desc">Descripción de lo que hiciste
+          <textarea id="he-desc" required maxlength="1000" style="min-height:70px" placeholder="Ej.: Reposición de tablero de alumbrado en km 80, de 19:00 a 22:00."></textarea>
+        </label>
+        <div class="acciones">
+          <button class="btn principal" type="submit" id="he-enviar">Agregar horas</button>
+          <span class="nota" id="he-estado" role="status"></span>
+        </div>
+      </form>
+      <div class="lista" id="he-cuerpo" style="gap:14px"></div>
+    </section>
+
     <section class="panel" id="cuenta">
       <details>
         <summary>Cambiar mi contraseña</summary>
@@ -446,8 +482,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=14"></script>
-<script src="calendario.js?v=14"></script>
-<script src="app.js?v=14"></script>
+<script src="config.js?v=15"></script>
+<script src="calendario.js?v=15"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

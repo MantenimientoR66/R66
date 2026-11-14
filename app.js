@@ -119,6 +119,8 @@ function abrirApp(){
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
   $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin; $("reportes").hidden = !S.admin;
   $("nav").hidden = !S.admin; $("flujo").hidden = true;
+  $("horas").hidden = S.control; $("he-trab-caja").hidden = !S.admin; $("he-excel").hidden = !S.admin;
+  S.horas = null; S.hePeriodo = ""; prepararHoras();
   for (const id of ["filtros","lista","cuenta"]) $(id).hidden = false;
   if (S.admin) mostrarVista(S.vista || "ordenes");
   aviso("");
@@ -639,6 +641,10 @@ function renderEquipo(){
   if (previo && activos.some(t => t.id === previo)) sel.value = previo;
 
   renderTurnos(activos);
+  const selH = $("he-trab"), prevH = selH.value;
+  selH.replaceChildren(h("option", {value:""}, "Elige un técnico"));
+  for (const t of S.trabajadores.filter(t => t.rol !== "control")) selH.append(h("option", {value:t.id}, t.nombre));
+  if (prevH) selH.value = prevH;
 
   const lista = $("equipo-lista"); lista.replaceChildren();
   for (const t of S.trabajadores){
@@ -1136,8 +1142,119 @@ $("fl-generar").addEventListener("click", async () => {
     h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro_" + ($("fl-fecha").value || hoyIso()) + ".html"}, "Descargar archivo"));
 });
 
+/* ---------- horas extras ---------- */
+// Los períodos van del día 11 de un mes al día 10 del siguiente.
+function periodoDe(iso){
+  let a = Number(iso.slice(0,4)), m = Number(iso.slice(5,7));
+  if (Number(iso.slice(8,10)) < 11){ m--; if (m < 1){ m = 12; a--; } }
+  const p = n => String(n).padStart(2,"0"), m2 = m === 12 ? 1 : m + 1, a2 = m === 12 ? a + 1 : a;
+  return {desde:a + "-" + p(m) + "-11", hasta:a2 + "-" + p(m2) + "-10"};
+}
+function periodoTxt(p){ return fechaCorta(p.desde) + " al " + fechaCorta(p.hasta); }
+function prepararHoras(){
+  const sel = $("he-periodo"); sel.replaceChildren();
+  let p = periodoDe(hoyIso());
+  for (let i = 0; i < 12; i++){
+    sel.append(h("option", {value:p.desde}, periodoTxt(p) + (i === 0 ? " (en curso)" : "")));
+    p = periodoDe(sumarIso(p.desde, -1));
+  }
+  $("he-fecha").value = hoyIso(); $("he-fecha").max = hoyIso();
+  if (!S.admin) $("he-fecha").min = periodoDe(hoyIso()).desde;
+  else $("he-fecha").removeAttribute("min");
+  $("he-estado").textContent = "";
+  renderHoras();
+  if (!S.admin && !S.control) cargarHoras();
+}
+async function cargarHoras(){
+  const desde = $("he-periodo").value; if (!desde || !S.token) return;
+  const p = periodoDe(desde);
+  try {
+    const d = await rpc("ot_horas_listar", {p_token:S.token, p_desde:p.desde, p_hasta:p.hasta});
+    if ($("he-periodo").value !== desde) return;      // cambió el período mientras cargaba
+    S.horas = d || []; S.hePeriodo = desde; S.heError = "";
+  } catch (e){ S.horas = null; S.heError = e.message; }
+  renderHoras();
+}
+function renderHoras(){
+  const caja = $("he-cuerpo"); caja.replaceChildren();
+  if (S.heError){ caja.append(h("p", {class:"mensaje"}, S.heError)); return; }
+  if (!S.horas){ caja.append(h("p", {class:"nota"}, "Cargando…")); return; }
+  const p = periodoDe($("he-periodo").value), enCurso = p.desde === periodoDe(hoyIso()).desde;
+  const suma = (l, tipo) => l.filter(x => !tipo || x.tipo === tipo).reduce((a, x) => a + Number(x.horas), 0);
+  caja.append(h("div", {class:"tiles"},
+    tile("Total del período", cantTxt(suma(S.horas)) + " h", periodoTxt(p), true),
+    tile("Horas de turno", cantTxt(suma(S.horas, "turno")) + " h", "2 h por día de semana, 6 h por sábado, domingo o feriado"),
+    tile("Otros trabajos", cantTxt(suma(S.horas, "manual")) + " h", "agregadas a mano, fuera del horario hábil")));
+  if (S.admin){
+    const nombres = [...new Set(S.horas.map(x => x.trabajador))].sort();
+    caja.append(h("h3", null, "Resumen por técnico"));
+    caja.append(tabla(["Técnico", "Horas de turno", "Otros trabajos", "Total"], nombres.map(n => {
+      const m = S.horas.filter(x => x.trabajador === n);
+      return [n, cantTxt(suma(m, "turno")), cantTxt(suma(m, "manual")), cantTxt(suma(m))];
+    }), "No hay horas extras en este período."));
+  }
+  caja.append(h("h3", null, "Detalle"));
+  if (!S.horas.length){ caja.append(h("p", {class:"nota"}, "No hay horas extras en este período.")); return; }
+  const puedeQuitar = x => S.admin || (x.tipo === "manual" && enCurso);
+  caja.append(h("div", {class:"tabla-caja"}, h("table", {class:"rep"},
+    h("thead", null, h("tr", null, h("th", {scope:"col"}, "Día"), S.admin ? h("th", {scope:"col"}, "Técnico") : null, h("th", {scope:"col"}, "Tipo"),
+      h("th", {scope:"col", class:"num-cel"}, "Horas"), h("th", {scope:"col"}, "Descripción"), h("th", {scope:"col"}, ""))),
+    h("tbody", null, S.horas.slice().reverse().map(x => h("tr", null,
+      h("td", null, diaTxt(x.fecha)), S.admin ? h("td", null, x.trabajador) : null, h("td", null, x.tipo === "turno" ? "Turno" : "Otro trabajo"),
+      h("td", {class:"num-cel"}, cantTxt(x.horas)), h("td", {style:"white-space:pre-wrap;overflow-wrap:anywhere"}, x.descripcion),
+      h("td", null, puedeQuitar(x) ? h("button", {class:"btn chico", type:"button", onclick: async ev => {
+        if (ev.target.dataset.ok !== "1"){ ev.target.dataset.ok = "1"; ev.target.textContent = "¿Quitar? Presiona otra vez"; return; }
+        ev.target.disabled = true;
+        try { await rpc("ot_horas_quitar", {p_token:S.token, p_id:x.id}); $("he-estado").textContent = "Registro quitado."; await cargarHoras(); }
+        catch (e){ $("he-estado").textContent = e.message; ev.target.disabled = false; }
+      }}, "Quitar") : null)))))));
+}
+$("he-periodo").addEventListener("change", () => { S.horas = null; S.heError = ""; renderHoras(); cargarHoras(); });
+$("form-he").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const est = $("he-estado"), f = $("he-fecha").value, horas = Number(String($("he-horas").value).replace(",", "."));
+  if (S.admin && !$("he-trab").value){ est.textContent = "Elige al técnico."; return; }
+  if (!f){ est.textContent = "Elige la fecha del trabajo."; return; }
+  if (!(horas > 0 && horas <= 24)){ est.textContent = "Escribe las horas trabajadas: un número mayor que 0 y hasta 24."; return; }
+  if (!$("he-desc").value.trim()){ est.textContent = "Describe el trabajo que hiciste."; return; }
+  $("he-enviar").disabled = true; est.textContent = "Guardando…";
+  try {
+    await rpc("ot_horas_agregar", Object.assign({p_token:S.token, p_fecha:f, p_horas:horas, p_descripcion:$("he-desc").value}, S.admin ? {p_trabajador:$("he-trab").value} : {}));
+    est.textContent = "Listo: " + cantTxt(horas) + " h agregadas el " + fechaCorta(f) + ".";
+    $("he-horas").value = ""; $("he-desc").value = "";
+    const per = periodoDe(f).desde;
+    if ([...$("he-periodo").options].some(o => o.value === per)) $("he-periodo").value = per;
+    await cargarHoras();
+  } catch (e){ est.textContent = e.message; }
+  $("he-enviar").disabled = false;
+});
+// Excel del período: una hoja de resumen por técnico y otra con el detalle día a día.
+$("he-excel").addEventListener("click", () => {
+  const est = $("he-estado");
+  if (!window.XLSX){ est.textContent = "No se pudo cargar el generador de Excel. Revisa tu conexión y recarga la página."; return; }
+  if (!S.horas || !S.horas.length){ est.textContent = "No hay horas extras en este período para descargar."; return; }
+  const p = periodoDe($("he-periodo").value), DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  const serie = iso => Date.UTC(Number(iso.slice(0,4)), Number(iso.slice(5,7)) - 1, Number(iso.slice(8,10))) / 86400000 + 25569;
+  const fechaCel = iso => ({t:"n", v:serie(iso), z:"dd-mm-yyyy"});
+  const suma = (l, tipo) => l.filter(x => !tipo || x.tipo === tipo).reduce((a, x) => a + Number(x.horas), 0);
+  const nombres = [...new Set(S.horas.map(x => x.trabajador))].sort();
+  const resumen = [["Horas extras · Ruta de la Fruta"], ["Período", {t:"n", v:serie(p.desde), z:"dd-mm-yyyy"}, "al", {t:"n", v:serie(p.hasta), z:"dd-mm-yyyy"}], [],
+    ["Técnico", "Horas de turno", "Otros trabajos", "Total de horas"]]
+    .concat(nombres.map(n => { const m = S.horas.filter(x => x.trabajador === n); return [n, suma(m, "turno"), suma(m, "manual"), suma(m)]; }))
+    .concat([["Total", suma(S.horas, "turno"), suma(S.horas, "manual"), suma(S.horas)]]);
+  const detalle = [["Fecha", "Día", "Técnico", "Tipo", "Horas", "Descripción"]]
+    .concat(S.horas.map(x => [fechaCel(x.fecha), DIAS[new Date(x.fecha + "T12:00:00").getDay()], x.trabajador, x.tipo === "turno" ? "Turno de emergencia" : "Otro trabajo", Number(x.horas), x.descripcion]));
+  const wb = XLSX.utils.book_new();
+  const h1 = XLSX.utils.aoa_to_sheet(resumen); h1["!cols"] = [{wch:26},{wch:16},{wch:16},{wch:16}];
+  const h2 = XLSX.utils.aoa_to_sheet(detalle); h2["!cols"] = [{wch:12},{wch:11},{wch:22},{wch:20},{wch:8},{wch:70}];
+  h2["!autofilter"] = {ref:"A1:F" + detalle.length};
+  XLSX.utils.book_append_sheet(wb, h1, "Resumen"); XLSX.utils.book_append_sheet(wb, h2, "Detalle");
+  XLSX.writeFile(wb, "Horas_extras_" + p.desde + "_al_" + p.hasta + ".xlsx");
+  est.textContent = "Excel descargado.";
+});
+
 /* ---------- menú del administrador ---------- */
-const VISTAS = {ordenes:["filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
+const VISTAS = {ordenes:["filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], horas:["horas"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
 function mostrarVista(v){
   S.vista = VISTAS[v] ? v : "ordenes";
   for (const k in VISTAS) for (const id of VISTAS[k]){
@@ -1145,6 +1262,7 @@ function mostrarVista(v){
     const d = el.querySelector("details"); if (d && k === S.vista) d.open = true;
   }
   for (const b of $("nav").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.v === S.vista));
+  if (S.vista === "horas") cargarHoras();
   $("tip").hidden = true;
 }
 for (const b of $("nav").querySelectorAll("button")) b.addEventListener("click", () => mostrarVista(b.dataset.v));

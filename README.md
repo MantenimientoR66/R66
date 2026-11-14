@@ -49,6 +49,13 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - Su reporte solo pide la foto del medidor y los metros cúbicos.
 - La pestaña **Flujómetro** del administrador muestra la semana y el mes del día elegido: promedio por día, total, lectura más alta y más baja, días con lectura, gráfico y tabla. **Generar reporte para imprimir** arma una versión para imprimir o guardar como PDF.
 
+## Horas extras
+
+- Los períodos van del día 11 de cada mes al día 10 del mes siguiente.
+- Quien está de turno de emergencia recibe solas 2 horas por cada día de semana y 6 horas por cada sábado, domingo o feriado. Cuenta quien está de turno a las 18:30 de ese día, así que el viernes es de quien entra a turno.
+- Cada técnico agrega en su panel las horas de otros trabajos fuera del horario hábil, con fecha, horas y descripción, dentro del período en curso. Puede quitar las que agregó mientras el período siga abierto.
+- El administrador ve todo en la pestaña **Horas extras**, puede agregar o quitar registros de cualquier técnico y período, y descarga el período en Excel (hoja Resumen y hoja Detalle).
+
 ## Turnos asignados a mano
 
 - En **Equipo y turnos** el administrador elige en el calendario cualquier día de un turno y el técnico que lo cubrirá. Esa asignación manda sobre la rotación automática; **Volver a la rotación** la quita.
