@@ -228,6 +228,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
     <nav class="nav" id="nav" aria-label="Secciones del administrador" hidden>
       <button type="button" data-v="ordenes" aria-pressed="true">Órdenes</button>
       <button type="button" data-v="panel" id="nav-panel" aria-pressed="false">Panel</button>
+      <button type="button" data-v="flujo" aria-pressed="false">Flujómetro</button>
       <button type="button" data-v="plan" aria-pressed="false">Plan preventivo</button>
       <button type="button" data-v="equipo" aria-pressed="false">Equipo y turnos</button>
       <button type="button" data-v="ajustes" aria-pressed="false">Ajustes</button>
@@ -355,12 +356,44 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </details>
     </section>
 
+    <section class="panel" id="flujo" hidden>
+      <h2>Reporte de flujómetro</h2>
+      <p class="nota">Muestra la semana y el mes del día que elijas. La lectura se asigna sola todos los días a las 8:30 al técnico de turno de emergencia.</p>
+      <div class="fila" style="align-items:end">
+        <label for="fl-fecha">Día de referencia
+          <input id="fl-fecha" type="date">
+        </label>
+        <div class="acciones">
+          <button class="btn" type="button" id="fl-generar">Generar reporte para imprimir</button>
+        </div>
+      </div>
+      <div class="acciones" id="fl-enlaces"></div>
+      <p class="nota" id="fl-estado"></p>
+      <div class="lista" id="fl-cuerpo" style="gap:14px"></div>
+    </section>
+
     <section class="panel" id="equipo" hidden>
       <details>
         <summary id="equipo-titulo">Equipo</summary>
         <p class="nota">Entrega a cada persona su usuario y una clave temporal. Al ingresar tendrá que crear su propia contraseña. Agrega el teléfono de quienes hacen turnos para poder avisarles por WhatsApp.</p>
         <h3 style="margin-top:12px">Turnos de emergencia</h3>
-        <p class="nota">Cada turno parte el viernes a las 14:30 y termina el viernes siguiente a las 8:29. Los técnicos incluidos se van alternando cada semana.</p>
+        <p class="nota">Cada turno parte el viernes a las 14:30 y termina el viernes siguiente a las 8:29. Los técnicos incluidos se van alternando cada semana, salvo los turnos que asignes a mano.</p>
+        <form id="form-turno" class="lista" style="margin-top:10px" autocomplete="off" hidden>
+          <div class="fila" style="align-items:end">
+            <label for="tu-fecha">Fecha del turno
+              <input id="tu-fecha" type="date" required>
+            </label>
+            <label for="tu-trab">Técnico
+              <select id="tu-trab" required></select>
+            </label>
+            <div class="acciones">
+              <button class="btn principal" type="submit" id="tu-enviar">Asignar turno</button>
+            </div>
+          </div>
+          <p class="nota" id="tu-vista"></p>
+          <p class="nota" id="tu-estado" role="status"></p>
+        </form>
+        <p class="nota" id="tu-falta" hidden>Para asignar turnos a mano con el calendario, ejecuta de nuevo el archivo supabase.sql en Supabase.</p>
         <div id="turnos-lista" style="margin-top:6px"></div>
         <h3 style="margin-top:14px">Personas</h3>
         <div class="lista" id="equipo-lista" style="margin-top:10px"></div>
@@ -413,8 +446,8 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=13"></script>
-<script src="calendario.js?v=13"></script>
-<script src="app.js?v=13"></script>
+<script src="config.js?v=14"></script>
+<script src="calendario.js?v=14"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

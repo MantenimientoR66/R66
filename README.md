@@ -43,6 +43,17 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - Si el proyecto de Supabase permite `pg_cron`, se genera a la hora exacta; si no, la primera vez que alguien abre la página después de esa hora.
 - Si el administrador elimina la ronda de un día, no se vuelve a crear ese día.
 
+## Flujómetro
+
+- El técnico de turno de emergencia recibe sola, todos los días a las 8:30 (también fines de semana y feriados), una OT de actividad **Flujómetro**. El administrador también puede crear una a mano eligiendo esa actividad.
+- Su reporte solo pide la foto del medidor y los metros cúbicos.
+- La pestaña **Flujómetro** del administrador muestra la semana y el mes del día elegido: promedio por día, total, lectura más alta y más baja, días con lectura, gráfico y tabla. **Generar reporte para imprimir** arma una versión para imprimir o guardar como PDF.
+
+## Turnos asignados a mano
+
+- En **Equipo y turnos** el administrador elige en el calendario cualquier día de un turno y el técnico que lo cubrirá. Esa asignación manda sobre la rotación automática; **Volver a la rotación** la quita.
+- Se puede asignar a cualquier técnico activo, aunque no esté en la rotación.
+
 ## Panel del administrador
 
 - El administrador navega por pestañas: Órdenes, Panel, Plan preventivo, Equipo y turnos, y Ajustes.
@@ -61,7 +72,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 - `index.html`, `app.js`, `calendario.js`, `logo.png`: la página.
 - `config.js`: dirección y clave pública del proyecto de Supabase.
-- `supabase.sql`: tablas y funciones de la base de datos. Se puede volver a ejecutar sin perder datos.
+- `supabase.sql`: tablas y funciones de la base de datos, todo en un solo archivo. Se puede volver a ejecutar sin perder datos. No lo reemplaces por archivos parciales: debe contener siempre la base completa.
 
 ## Notas
 

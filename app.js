@@ -49,7 +49,8 @@ const ACTIVIDADES = [
   ["DMV 20", "Mantención de Iluminación Exterior de Calzadas"],
   ["DMV 21", "Mantención de Citófonos de Emergencia (Postes SOS)"],
   ["DMV 22", "Mantención de Letreros Dinámicos"],
-  ["DSI 01", "Mantención Sistema Alarmas SICAS"]
+  ["DSI 01", "Mantención Sistema Alarmas SICAS"],
+  ["", "Flujómetro"]
 ].map(([c, d]) => c ? c + " · " + d : d);
 function opcionesActividad(sel, valor){
   sel.replaceChildren(h("option", {value:""}, "Elige el código de actividad"));
@@ -57,6 +58,9 @@ function opcionesActividad(sel, valor){
   for (const a of lista) sel.append(h("option", {value:a}, a));
   sel.value = valor || "";
 }
+const FLUJO = "Flujómetro";      // esta actividad solo pide una foto del medidor y los metros cúbicos
+function esFlujo(o){ return o.tipo !== "incidencia" && o.actividad === FLUJO; }
+function m3Txt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:3}); }
 const ESTADOS = {asignada:"Asignada", ejecucion:"En ejecución", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
 
 function aviso(texto, bien){
@@ -114,7 +118,7 @@ function abrirApp(){
   $("rol").textContent = S.yo.nombre + (S.admin ? " · Administrador" : S.control ? " · Centro de control" : " · Técnico");
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
   $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin; $("reportes").hidden = !S.admin;
-  $("nav").hidden = !S.admin;
+  $("nav").hidden = !S.admin; $("flujo").hidden = true;
   for (const id of ["filtros","lista","cuenta"]) $(id).hidden = false;
   if (S.admin) mostrarVista(S.vista || "ordenes");
   aviso("");
@@ -176,8 +180,9 @@ async function cargar(){
   cargando = true;
   try {
     const d = await rpc("ot_listar", {p_token:S.token});
-    const hu = JSON.stringify(d.ordenes), he = JSON.stringify([d.trabajadores, d.turnos || []]);
+    const hu = JSON.stringify(d.ordenes), he = JSON.stringify([d.trabajadores, d.turnos || [], d.turnos_calendario || null]);
     S.turnos = d.turnos || [];
+    S.turnosCal = d.turnos_calendario || null;       // null = la base de datos aún no tiene los turnos manuales
     const hp = JSON.stringify(d.plan || []);
     S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
@@ -189,7 +194,7 @@ async function cargar(){
     if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
     const cambioRep = hu !== S.huella || hp !== S.huellaRep;
     if (hu !== S.huella){ S.huella = hu; render(); }
-    if (cambioRep){ S.huellaRep = hp; renderReportes(); }
+    if (cambioRep){ S.huellaRep = hp; renderReportes(); renderFlujo(); }
     if ($("aviso").textContent.startsWith("No hay conexión")) aviso("");
   } catch (e){ if (S.token && !$("v-app").hidden) aviso(e.message); }
   cargando = false;
@@ -326,6 +331,7 @@ function tarjeta(o){
     o.ubicacion ? h("span", null, o.ubicacion) : null,
     o.origen === "plan" ? h("span", null, "Preventivo") : null,
     o.origen === "ronda" ? h("span", null, "Ronda automática de turno") : null,
+    o.origen === "flujometro" ? h("span", null, "Lectura diaria automática") : null,
     !inc && o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
@@ -350,9 +356,11 @@ function tarjeta(o){
 
   const editable = !jefe && (estado === "ejecucion" || estado === "devuelta");
   if (o.enviado && !editable){
+    const flu = esFlujo(o);
     cuerpo.append(h("div", {class:"lista"},
-      inc ? null : bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
-      bloque(inc ? "Cómo se resolvió" : "Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
+      inc || flu ? null : bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
+      flu ? bloque("Lectura del flujómetro", h("p", {class:"cod"}, o.metros_cubicos != null ? m3Txt(o.metros_cubicos) + " m³" : "—"))
+          : bloque(inc ? "Cómo se resolvió" : "Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
       bloque(o.tiene_foto2 ? "Fotos" : "Foto", h("div", {class:"fotos"}, imagen(o, 1), o.tiene_foto2 ? imagen(o, 2) : null)),
       h("p", {class:"nota"}, (inc ? "Cierre informado el " : "Reporte enviado el ") + fecha(o.enviado))));
   }
@@ -384,6 +392,7 @@ function tarjeta(o){
 
 function formReporte(o){
   const id = o.id, inc = o.tipo === "incidencia";
+  if (esFlujo(o)) return formFlujo(o);
   const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null, file2:null, vista2:null});
   const ocupado = !!S.ocupado[id];
   const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o, 1) : null;
@@ -417,6 +426,57 @@ function formReporte(o){
     h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"submit", id:"env-"+id, disabled:ocupado},
         ocupado ? "Enviando…" : inc ? "Cerrar incidencia" : o.enviado ? "Reenviar reporte" : "Enviar reporte")));
+}
+
+// Flujómetro: solo la foto del medidor y los metros cúbicos.
+function formFlujo(o){
+  const id = o.id, ocupado = !!S.ocupado[id];
+  const b = S.borradores[id] || (S.borradores[id] = {m3:o.metros_cubicos != null ? String(o.metros_cubicos).replace(".", ",") : "", file:null, vista:null});
+  const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o, 1) : null;
+  return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarFlujo(o); }},
+    h("span", {class:"bloque"}, h("span", {class:"rot"}, "Lectura del flujómetro")),
+    h("label", {for:"m3-"+id}, "Metros cúbicos (m³)",
+      h("input", {id:"m3-"+id, required:true, inputmode:"decimal", maxlength:"14", placeholder:"Ej.: 1250,5", value:b.m3,
+        oninput: ev => { b.m3 = ev.target.value; }})),
+    h("label", {for:"fot-"+id}, prev ? "Cambiar foto" : "Foto del flujómetro",
+      h("input", {id:"fot-"+id, type:"file", accept:"image/*",
+        onchange: ev => {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          if (b.vista) URL.revokeObjectURL(b.vista);
+          b.file = file; b.vista = URL.createObjectURL(file); render();
+        }})),
+    prev,
+    h("div", {class:"acciones"},
+      h("button", {class:"btn principal", type:"submit", id:"env-"+id, disabled:ocupado},
+        ocupado ? "Enviando…" : o.enviado ? "Reenviar lectura" : "Enviar lectura")));
+}
+// Acepta "1250,5", "1250.5" y "1.250,5".
+function leerM3(t){
+  let v = String(t || "").trim().replace(/\s/g, "");
+  if (!v) return null;
+  if (v.includes(",")) v = v.replace(/\./g, "").replace(",", ".");
+  return /^\d+(\.\d+)?$/.test(v) ? Number(v) : null;
+}
+async function enviarFlujo(o){
+  const id = o.id, b = S.borradores[id];
+  if (!b || S.ocupado[id]) return;
+  const m3 = leerM3(b.m3);
+  if (m3 == null){ S.errores[id] = "Escribe los metros cúbicos solo con números, por ejemplo 1250,5."; render(); return; }
+  if (!b.file && !o.tiene_foto){ S.errores[id] = "Agrega la foto del flujómetro antes de enviar."; render(); return; }
+  S.ocupado[id] = true; delete S.errores[id]; render();
+  try {
+    let foto = null;
+    if (b.file){
+      try { foto = await prepararFoto(b.file); }
+      catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
+    }
+    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:FLUJO, p_descripcion:"", p_foto:foto, p_foto2:null, p_m3:m3});
+    if (b.vista) URL.revokeObjectURL(b.vista);
+    delete S.borradores[id]; delete S.abiertos[id];
+  } catch (e){ S.errores[id] = e.message; }
+  delete S.ocupado[id];
+  await cargar(); render();
 }
 
 function accionesAdmin(o){
@@ -511,6 +571,64 @@ function claveAzar(){
   crypto.getRandomValues(v);
   return Array.from(v, n => abc[n % abc.length]).join("");
 }
+/* ---------- turnos de emergencia ---------- */
+// Viernes en que parte el turno que cubre el día dado (el viernes mismo cuenta como inicio de su turno).
+function viernesDe(iso){ const d = new Date(iso + "T12:00:00Z"); return sumarIso(iso, -((d.getUTCDay() + 2) % 7)); }
+function turnoTxt(inicio){ return "Viernes " + fechaCorta(inicio) + " 14:30 al viernes " + fechaCorta(sumarIso(inicio, 7)) + " 8:29"; }
+function renderTurnos(activos){
+  const tur = $("turnos-lista"); tur.replaceChildren();
+  const manual = !!S.turnosCal;
+  const cal = manual ? S.turnosCal : (S.turnos || []).map(x => ({inicio:x.desde, hasta:x.hasta, tecnico:x.tecnico, manual:false}));
+  $("form-turno").hidden = !manual; $("tu-falta").hidden = manual;
+  if (manual){
+    const sel = $("tu-trab"), previo = sel.value;
+    sel.replaceChildren(h("option", {value:""}, "Elige un técnico"));
+    for (const t of activos) sel.append(h("option", {value:t.id}, t.nombre));
+    if (previo && activos.some(t => t.id === previo)) sel.value = previo;
+    if (cal.length){ $("tu-fecha").min = cal[0].inicio; if (!$("tu-fecha").value) $("tu-fecha").value = cal[0].inicio; }
+    vistaTurno();
+  }
+  if (!cal.some(x => x.tecnico)){ tur.append(h("p", {class:"nota"}, "Ningún técnico tiene turnos. Incluye al menos a uno en la rotación o asigna un turno a mano.")); return; }
+  const fila = (x, i) => h("tr", null,
+    h("td", null, turnoTxt(x.inicio) + (i === 0 ? " (vigente)" : "")),
+    h("td", null, x.tecnico || "Sin técnico"),
+    h("td", null, x.manual ? "Asignado a mano" : "Rotación automática"),
+    manual ? h("td", null, h("div", {class:"acciones"},
+      h("button", {class:"btn chico", type:"button", onclick: () => { $("tu-fecha").value = x.inicio; if (x.tecnico_id) $("tu-trab").value = x.tecnico_id; vistaTurno(); $("tu-trab").focus(); }}, "Cambiar"),
+      x.manual ? h("button", {class:"btn chico", type:"button", onclick: async ev => {
+        ev.target.disabled = true;
+        try { await rpc("ot_turno_quitar", {p_token:S.token, p_inicio:x.inicio}); $("tu-estado").textContent = "El turno del " + fechaCorta(x.inicio) + " volvió a la rotación automática."; await cargar(); }
+        catch (e){ $("tu-estado").textContent = e.message; ev.target.disabled = false; }
+      }}, "Volver a la rotación") : null)) : null);
+  const tabla = filas => h("div", {class:"tabla-caja"}, h("table", {class:"rep"},
+    h("thead", null, h("tr", null, h("th", {scope:"col"}, "Turno de emergencia"), h("th", {scope:"col"}, "Técnico"), h("th", {scope:"col"}, "Origen"), manual ? h("th", {scope:"col"}, "") : null)),
+    h("tbody", null, filas)));
+  tur.append(tabla(cal.slice(0, 8).map(fila)));
+  if (cal.length > 8) tur.append(h("details", null, h("summary", {class:"mas"}, "Ver los " + (cal.length - 8) + " turnos siguientes"), tabla(cal.slice(8).map((x, i) => fila(x, i + 8)))));
+}
+// Muestra a qué turno corresponde la fecha elegida en el calendario.
+function vistaTurno(){
+  const f = $("tu-fecha").value, v = $("tu-vista");
+  if (!f){ v.textContent = "Elige en el calendario cualquier día del turno que quieres asignar."; return; }
+  const ini = viernesDe(f), x = (S.turnosCal || []).find(t => t.inicio === ini);
+  v.textContent = "Turno: " + turnoTxt(ini).toLowerCase() + "." + (x && x.tecnico ? " Hoy lo tiene " + x.tecnico + (x.manual ? " (asignado a mano)." : " (rotación automática).") : "");
+}
+$("tu-fecha").addEventListener("change", vistaTurno);
+$("form-turno").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const est = $("tu-estado"), f = $("tu-fecha").value, id = $("tu-trab").value;
+  if (!f){ est.textContent = "Elige la fecha del turno en el calendario."; return; }
+  if (!id){ est.textContent = "Elige al técnico."; return; }
+  const ini = viernesDe(f), t = S.trabajadores.find(x => x.id === id);
+  $("tu-enviar").disabled = true; est.textContent = "Guardando…";
+  try {
+    await rpc("ot_turno_asignar", {p_token:S.token, p_inicio:ini, p_id:id});
+    est.textContent = "Listo: " + (t ? t.nombre : "el técnico") + " queda con el turno del " + turnoTxt(ini).toLowerCase() + ".";
+    await cargar();
+  } catch (e){ est.textContent = e.message; }
+  $("tu-enviar").disabled = false;
+});
+
 function renderEquipo(){
   if (!S.admin) return;
   const activos = S.trabajadores.filter(t => t.activo && t.rol !== "control");
@@ -520,14 +638,7 @@ function renderEquipo(){
   for (const t of activos) sel.append(h("option", {value:t.id}, t.nombre));
   if (previo && activos.some(t => t.id === previo)) sel.value = previo;
 
-  const tur = $("turnos-lista"); tur.replaceChildren();
-  const conTec = (S.turnos || []).filter(x => x.tecnico);
-  if (!conTec.length) tur.append(h("p", {class:"nota"}, "Ningún técnico está en la rotación de turnos. Incluye al menos a uno."));
-  else tur.append(h("div", {class:"tabla-caja"}, h("table", {class:"rep"},
-    h("thead", null, h("tr", null, h("th", {scope:"col"}, "Turno de emergencia"), h("th", {scope:"col"}, "Técnico"))),
-    h("tbody", null, conTec.map((x, i) => h("tr", null,
-      h("td", null, "Viernes " + fechaCorta(x.desde) + " 14:30 al viernes " + fechaCorta(x.hasta) + " 8:29" + (i === 0 ? " (vigente)" : "")),
-      h("td", null, x.tecnico)))))));
+  renderTurnos(activos);
 
   const lista = $("equipo-lista"); lista.replaceChildren();
   for (const t of S.trabajadores){
@@ -611,6 +722,10 @@ $("n-act").append(h("option", {value:OTROS}, "Otros (escribir un código nuevo)"
 $("n-act").addEventListener("change", () => {
   const otro = $("n-act").value === OTROS;
   $("n-act-otro-caja").hidden = !otro;
+  if ($("n-act").value === FLUJO){
+    if (!$("n-titulo").value.trim()) $("n-titulo").value = "Lectura de flujómetro";
+    if (!$("n-detalle").value.trim()) $("n-detalle").value = "Adjunta una foto del medidor y anota los metros cúbicos.";
+  }
   if (otro) $("n-act-otro").focus();
 });
 
@@ -892,9 +1007,9 @@ async function generarInforme(){
       return '<section class="trabajo"><h3>' + esc(numero(o)) + " · " + esc(inc ? "Incidencia fuera de horario" : (o.actividad || o.titulo)) + ' <span class="est' + (hecha(o) ? "" : " no") + '">' + esc(estadoTxt(o)) + "</span></h3><table>" +
         fila("Técnico", o.trabajador) + fila(inc ? "Informada por" : "", inc ? o.creada_por : "") + fila("Trabajo", inc ? "" : o.titulo) +
         fila(inc ? "Informada el" : "Asignada el", fecha(o.creada)) + fila("Aceptada el", o.aceptada ? fecha(o.aceptada) : "") + fila("Fecha programada", o.fecha_limite ? fechaCorta(o.fecha_limite) : "") +
-        fila("Origen", o.origen === "plan" ? "Plan preventivo" : o.origen === "ronda" ? "Ronda automática del turno de emergencia" : "") + fila("Cantidad programada", o.cantidad != null ? cantTxt(o.cantidad) + " " + (o.unidad || "UN") : "") +
+        fila("Origen", o.origen === "plan" ? "Plan preventivo" : o.origen === "ronda" ? "Ronda automática del turno de emergencia" : o.origen === "flujometro" ? "Lectura diaria automática del turno de emergencia" : "") + fila("Cantidad programada", o.cantidad != null ? cantTxt(o.cantidad) + " " + (o.unidad || "UN") : "") +
         fila("Ubicación", o.ubicacion) + fila(inc ? "Qué pasó" : "Detalle", o.detalle) +
-        fila("Código informado", inc ? "" : o.codigo_actividad) + fila(inc ? "Cómo se resolvió" : "Trabajo realizado", o.descripcion_realizada) +
+        fila("Código informado", inc ? "" : o.codigo_actividad) + fila("Metros cúbicos", o.metros_cubicos != null ? m3Txt(o.metros_cubicos) + " m³" : "") + fila(inc ? "Cómo se resolvió" : "Trabajo realizado", o.descripcion_realizada) +
         fila(inc ? "Cerrada el" : "Reporte enviado el", o.enviado ? fecha(o.enviado) : "") + fila(inc ? "" : "Cerrada el", !inc && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de cierre", o.nota_cierre) +
         "</table>" + (f ? '<img src="' + f + '" alt="Foto del trabajo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
         (f2 ? '<img src="' + f2 + '" alt="Segunda foto del trabajo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
@@ -930,8 +1045,99 @@ async function generarInforme(){
 }
 $("inf-generar").addEventListener("click", generarInforme);
 
+/* ---------- reporte de flujómetro ---------- */
+// Una lectura por día: la última enviada de ese día. El día es la fecha límite de la OT (o el día en que se creó).
+function lecturasFlujo(){
+  const porDia = {};
+  for (const o of S.ordenes){
+    if (!esFlujo(o) || o.metros_cubicos == null || !o.enviado) continue;
+    const dia = diaRef(o), ant = porDia[dia];
+    if (!ant || new Date(o.enviado) > new Date(ant.enviado)) porDia[dia] = {dia, m3:Number(o.metros_cubicos), tecnico:o.trabajador, enviado:o.enviado, numero:o.numero};
+  }
+  return Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1);
+}
+function resumenFlujo(lect, desde, hasta){
+  const hoy = hoyIso(), fin = hasta < hoy ? hasta : hoy, dias = [];
+  for (let d = desde; d <= hasta; d = sumarIso(d, 1)) dias.push(d);
+  const del = lect.filter(l => l.dia >= desde && l.dia <= hasta), vals = del.map(l => l.m3);
+  const transcurridos = dias.filter(d => d <= fin).length;
+  const pendientes = S.ordenes.filter(o => esFlujo(o) && !hecha(o) && diaRef(o) >= desde && diaRef(o) <= fin).length;
+  const max = del.reduce((m, l) => !m || l.m3 > m.m3 ? l : m, null), min = del.reduce((m, l) => !m || l.m3 < m.m3 ? l : m, null);
+  return {dias, del, transcurridos, pendientes, max, min, total:vals.reduce((a, b) => a + b, 0), promedio:prom(vals)};
+}
+function periodosFlujo(){
+  const ref = $("fl-fecha").value || hoyIso(), lun = lunesDe(ref), mes = ref.slice(0,7);
+  const finMes = mes + "-" + String(new Date(Number(mes.slice(0,4)), Number(mes.slice(5,7)), 0).getDate()).padStart(2,"0");
+  const lect = lecturasFlujo();
+  return {lect, periodos:[
+    {titulo:"Semana " + semanaIso(lun) + " (lunes " + fechaCorta(lun) + " al domingo " + fechaCorta(sumarIso(lun, 6)) + ")", r:resumenFlujo(lect, lun, sumarIso(lun, 6)), cada:1, rot:d => diaTxt(d).slice(0,3) + " " + d.slice(8)},
+    {titulo:mesTxt(mes), r:resumenFlujo(lect, mes + "-01", finMes), cada:5, rot:d => String(Number(d.slice(8)))}]};
+}
+function filasFlujo(lect, del){
+  return del.slice().reverse().map(l => {
+    const i = lect.indexOf(l), ant = i > 0 ? lect[i - 1] : null, dif = ant ? l.m3 - ant.m3 : null;
+    return [diaTxt(l.dia), l.tecnico, m3Txt(l.m3), dif == null ? "—" : (dif > 0 ? "+" : "") + m3Txt(dif), fecha(l.enviado)];
+  });
+}
+const CAB_FLUJO = ["Día", "Técnico", "Metros cúbicos", "Diferencia con la lectura anterior", "Informada el"];
+function renderFlujo(){
+  if (!S.admin) return;
+  if (!$("fl-fecha").value) $("fl-fecha").value = hoyIso();
+  const caja = $("fl-cuerpo"); caja.replaceChildren();
+  const {lect, periodos} = periodosFlujo();
+  for (const p of periodos){
+    const r = p.r;
+    caja.append(h("h3", null, p.titulo));
+    caja.append(h("div", {class:"tiles"},
+      tile("Promedio por día", r.del.length ? m3Txt(r.promedio) + " m³" : "—", r.del.length ? "promedio de las " + r.del.length + " lecturas del período" : "sin lecturas en el período", true),
+      tile("Total del período", r.del.length ? m3Txt(r.total) + " m³" : "—", "suma de las lecturas"),
+      tile("Lectura más alta", r.max ? m3Txt(r.max.m3) + " m³" : "—", r.max ? diaTxt(r.max.dia).toLowerCase() : ""),
+      tile("Lectura más baja", r.min ? m3Txt(r.min.m3) + " m³" : "—", r.min ? diaTxt(r.min.dia).toLowerCase() : ""),
+      tile("Días con lectura", r.del.length + " de " + r.transcurridos, r.pendientes ? r.pendientes + (r.pendientes === 1 ? " lectura asignada sin informar" : " lecturas asignadas sin informar") : "días transcurridos del período")));
+    if (r.del.length){
+      const porDia = {}; for (const l of r.del) porDia[l.dia] = l.m3;
+      caja.append(graficoColumnas(r.dias.map(d => ({rotulo:p.rot(d), titulo:diaTxt(d), valores:[porDia[d] || 0]})), [{nombre:"m³", clase:"s-real"}], p.cada));
+    }
+    caja.append(tabla(CAB_FLUJO, filasFlujo(lect, r.del), "No hay lecturas de flujómetro en este período."));
+  }
+  caja.append(h("p", {class:"nota"}, "Cada día cuenta con su última lectura enviada, aunque todavía no hayas cerrado la OT. El promedio es la suma de las lecturas dividida por los días que tienen lectura."));
+}
+$("fl-fecha").addEventListener("change", () => { $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); });
+let urlFlujo = null;
+$("fl-generar").addEventListener("click", async () => {
+  const {lect, periodos} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
+  let logo = "";
+  try { logo = await aDataUrl(await (await fetch("logo.png")).blob()); } catch (e){}
+  const bloque = p => {
+    const r = p.r, filas = filasFlujo(lect, r.del);
+    return "<h2>" + esc(p.titulo) + "</h2><table class=\"res\">" +
+      "<tr><th>Promedio por día</th><td>" + (r.del.length ? esc(m3Txt(r.promedio)) + " m³" : "—") + "</td></tr>" +
+      "<tr><th>Total del período</th><td>" + (r.del.length ? esc(m3Txt(r.total)) + " m³" : "—") + "</td></tr>" +
+      "<tr><th>Lectura más alta</th><td>" + (r.max ? esc(m3Txt(r.max.m3)) + " m³, " + esc(diaTxt(r.max.dia).toLowerCase()) : "—") + "</td></tr>" +
+      "<tr><th>Lectura más baja</th><td>" + (r.min ? esc(m3Txt(r.min.m3)) + " m³, " + esc(diaTxt(r.min.dia).toLowerCase()) : "—") + "</td></tr>" +
+      "<tr><th>Días con lectura</th><td>" + r.del.length + " de " + r.transcurridos + " días transcurridos</td></tr></table>" +
+      (filas.length ? "<table><tr>" + CAB_FLUJO.map((c, i) => "<th" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</th>").join("") + "</tr>" +
+        filas.map(f => "<tr>" + f.map((c, i) => "<td" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</td>").join("") + "</tr>").join("") + "</table>"
+        : '<p class="pie">No hay lecturas en este período.</p>');
+  };
+  const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reporte de flujómetro</title><style>' +
+    "body{font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#002d57;margin:0;background:#fff}main{max-width:820px;margin:0 auto;padding:24px 20px 60px}" +
+    "header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:4px solid #01add3;padding-bottom:12px}header img{height:64px}h1{font-size:22px;margin:0}h2{font-size:17px;margin:26px 0 8px}" +
+    "table{border-collapse:collapse;width:100%;margin-bottom:12px}th,td{text-align:left;vertical-align:top;padding:4px 10px 4px 0;border-top:1px solid #cfdde6}.n{text-align:right;white-space:nowrap}.res th{width:200px;font-weight:600;color:#4f6478}" +
+    ".pie{color:#4f6478}.barra{margin:14px 0}.barra button{font:600 14px system-ui,sans-serif;padding:9px 16px;border-radius:4px;border:1px solid #002d57;background:#002d57;color:#fff;cursor:pointer}" +
+    "@media print{.barra{display:none}main{padding:0}}</style></head><body><main>" +
+    "<header><div><h1>Reporte de flujómetro</h1><p>Semanal y mensual · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
+    '<div class="barra"><button type="button" onclick="window.print()">Imprimir o guardar como PDF</button></div>' + periodos.map(bloque).join("") +
+    '<p class="pie">Reporte generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". Cada día cuenta con su última lectura enviada.</p></main></body></html>";
+  if (urlFlujo) URL.revokeObjectURL(urlFlujo);
+  urlFlujo = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
+  est.textContent = "Reporte listo.";
+  enl.replaceChildren(h("a", {class:"btn wa", href:urlFlujo, target:"_blank", rel:"noopener"}, "Abrir reporte"),
+    h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro_" + ($("fl-fecha").value || hoyIso()) + ".html"}, "Descargar archivo"));
+});
+
 /* ---------- menú del administrador ---------- */
-const VISTAS = {ordenes:["filtros","nueva","lista"], panel:["reportes"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
+const VISTAS = {ordenes:["filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
 function mostrarVista(v){
   S.vista = VISTAS[v] ? v : "ordenes";
   for (const k in VISTAS) for (const id of VISTAS[k]){
