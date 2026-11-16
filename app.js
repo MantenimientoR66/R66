@@ -1052,6 +1052,7 @@ async function generarInforme(){
 $("inf-generar").addEventListener("click", generarInforme);
 
 /* ---------- reporte de flujómetro ---------- */
+// El técnico anota lo que marca el medidor (acumulado). El consumo de un día es su lectura menos la lectura anterior.
 // Una lectura por día: la última enviada de ese día. El día es la fecha límite de la OT (o el día en que se creó).
 function lecturasFlujo(){
   const porDia = {};
@@ -1060,16 +1061,23 @@ function lecturasFlujo(){
     const dia = diaRef(o), ant = porDia[dia];
     if (!ant || new Date(o.enviado) > new Date(ant.enviado)) porDia[dia] = {dia, m3:Number(o.metros_cubicos), tecnico:o.trabajador, enviado:o.enviado, numero:o.numero};
   }
-  return Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1);
+  const lect = Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1);
+  lect.forEach((l, i) => {
+    const ant = i > 0 ? lect[i - 1] : null;
+    l.consumo = ant ? l.m3 - ant.m3 : null;                                   // null = primera lectura, no hay con qué restar
+    l.dias = ant ? Math.round((new Date(l.dia + "T12:00:00Z") - new Date(ant.dia + "T12:00:00Z")) / 86400000) : null;
+  });
+  return lect;
 }
 function resumenFlujo(lect, desde, hasta){
   const hoy = hoyIso(), fin = hasta < hoy ? hasta : hoy, dias = [];
   for (let d = desde; d <= hasta; d = sumarIso(d, 1)) dias.push(d);
-  const del = lect.filter(l => l.dia >= desde && l.dia <= hasta), vals = del.map(l => l.m3);
+  const del = lect.filter(l => l.dia >= desde && l.dia <= hasta), con = del.filter(l => l.consumo != null);
   const transcurridos = dias.filter(d => d <= fin).length;
   const pendientes = S.ordenes.filter(o => esFlujo(o) && !hecha(o) && diaRef(o) >= desde && diaRef(o) <= fin).length;
-  const max = del.reduce((m, l) => !m || l.m3 > m.m3 ? l : m, null), min = del.reduce((m, l) => !m || l.m3 < m.m3 ? l : m, null);
-  return {dias, del, transcurridos, pendientes, max, min, total:vals.reduce((a, b) => a + b, 0), promedio:prom(vals)};
+  const max = con.reduce((m, l) => !m || l.consumo > m.consumo ? l : m, null), min = con.reduce((m, l) => !m || l.consumo < m.consumo ? l : m, null);
+  const total = con.reduce((a, l) => a + l.consumo, 0), diasCubiertos = con.reduce((a, l) => a + l.dias, 0);
+  return {dias, del, con, transcurridos, pendientes, max, min, total, diasCubiertos, promedio:diasCubiertos ? total / diasCubiertos : null};
 }
 function periodosFlujo(){
   const ref = $("fl-fecha").value || hoyIso(), lun = lunesDe(ref), mes = ref.slice(0,7);
@@ -1079,48 +1087,47 @@ function periodosFlujo(){
     {titulo:"Semana " + semanaIso(lun) + " (lunes " + fechaCorta(lun) + " al domingo " + fechaCorta(sumarIso(lun, 6)) + ")", r:resumenFlujo(lect, lun, sumarIso(lun, 6)), cada:1, rot:d => diaTxt(d).slice(0,3) + " " + d.slice(8)},
     {titulo:mesTxt(mes), r:resumenFlujo(lect, mes + "-01", finMes), cada:5, rot:d => String(Number(d.slice(8)))}]};
 }
-function filasFlujo(lect, del){
-  return del.slice().reverse().map(l => {
-    const i = lect.indexOf(l), ant = i > 0 ? lect[i - 1] : null, dif = ant ? l.m3 - ant.m3 : null;
-    return [diaTxt(l.dia), l.tecnico, m3Txt(l.m3), dif == null ? "—" : (dif > 0 ? "+" : "") + m3Txt(dif), fecha(l.enviado)];
-  });
+function promTxt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:1}); }
+function consumoTxt(l){ return l.consumo == null ? "—" : m3Txt(l.consumo) + (l.dias > 1 ? " (en " + l.dias + " días)" : ""); }
+function filasFlujo(del){
+  return del.slice().reverse().map(l => [diaTxt(l.dia), l.tecnico, m3Txt(l.m3), consumoTxt(l), fecha(l.enviado)]);
 }
-const CAB_FLUJO = ["Día", "Técnico", "Metros cúbicos", "Diferencia con la lectura anterior", "Informada el"];
+const CAB_FLUJO = ["Día", "Técnico", "Lectura del medidor (m³)", "Consumo: lectura menos la anterior (m³)", "Informada el"];
 function renderFlujo(){
   if (!S.admin) return;
   if (!$("fl-fecha").value) $("fl-fecha").value = hoyIso();
   const caja = $("fl-cuerpo"); caja.replaceChildren();
-  const {lect, periodos} = periodosFlujo();
+  const {periodos} = periodosFlujo();
   for (const p of periodos){
-    const r = p.r;
+    const r = p.r, hay = r.con.length > 0;
     caja.append(h("h3", null, p.titulo));
     caja.append(h("div", {class:"tiles"},
-      tile("Promedio por día", r.del.length ? m3Txt(r.promedio) + " m³" : "—", r.del.length ? "promedio de las " + r.del.length + " lecturas del período" : "sin lecturas en el período", true),
-      tile("Total del período", r.del.length ? m3Txt(r.total) + " m³" : "—", "suma de las lecturas"),
-      tile("Lectura más alta", r.max ? m3Txt(r.max.m3) + " m³" : "—", r.max ? diaTxt(r.max.dia).toLowerCase() : ""),
-      tile("Lectura más baja", r.min ? m3Txt(r.min.m3) + " m³" : "—", r.min ? diaTxt(r.min.dia).toLowerCase() : ""),
+      tile("Consumo promedio por día", hay ? promTxt(r.promedio) + " m³" : "—", hay ? "consumo del período dividido por " + r.diasCubiertos + (r.diasCubiertos === 1 ? " día" : " días") : "faltan lecturas para calcularlo", true),
+      tile("Consumo del período", hay ? m3Txt(r.total) + " m³" : "—", "suma de las diferencias entre lecturas"),
+      tile("Mayor consumo", r.max ? m3Txt(r.max.consumo) + " m³" : "—", r.max ? diaTxt(r.max.dia).toLowerCase() + (r.max.dias > 1 ? ", en " + r.max.dias + " días" : "") : ""),
+      tile("Menor consumo", r.min ? m3Txt(r.min.consumo) + " m³" : "—", r.min ? diaTxt(r.min.dia).toLowerCase() + (r.min.dias > 1 ? ", en " + r.min.dias + " días" : "") : ""),
       tile("Días con lectura", r.del.length + " de " + r.transcurridos, r.pendientes ? r.pendientes + (r.pendientes === 1 ? " lectura asignada sin informar" : " lecturas asignadas sin informar") : "días transcurridos del período")));
-    if (r.del.length){
-      const porDia = {}; for (const l of r.del) porDia[l.dia] = l.m3;
-      caja.append(graficoColumnas(r.dias.map(d => ({rotulo:p.rot(d), titulo:diaTxt(d), valores:[porDia[d] || 0]})), [{nombre:"m³", clase:"s-real"}], p.cada));
+    if (hay){
+      const porDia = {}; for (const l of r.con) porDia[l.dia] = Math.max(0, l.consumo);
+      caja.append(graficoColumnas(r.dias.map(d => ({rotulo:p.rot(d), titulo:diaTxt(d), valores:[porDia[d] || 0]})), [{nombre:"m³ consumidos", clase:"s-real"}], p.cada));
     }
-    caja.append(tabla(CAB_FLUJO, filasFlujo(lect, r.del), "No hay lecturas de flujómetro en este período."));
+    caja.append(tabla(CAB_FLUJO, filasFlujo(r.del), "No hay lecturas de flujómetro en este período."));
   }
-  caja.append(h("p", {class:"nota"}, "Cada día cuenta con su última lectura enviada, aunque todavía no hayas cerrado la OT. El promedio es la suma de las lecturas dividida por los días que tienen lectura."));
+  caja.append(h("p", {class:"nota"}, "El consumo de cada día es su lectura menos la lectura anterior. Si falta la lectura de un día, la diferencia siguiente cubre varios días y así se indica. La primera lectura registrada no tiene consumo porque no hay una anterior. Cada día cuenta con su última lectura enviada, aunque todavía no hayas cerrado la OT."));
 }
 $("fl-fecha").addEventListener("change", () => { $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); });
 let urlFlujo = null;
 $("fl-generar").addEventListener("click", async () => {
-  const {lect, periodos} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
+  const {periodos} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
   let logo = "";
   try { logo = await aDataUrl(await (await fetch("logo.png")).blob()); } catch (e){}
   const bloque = p => {
-    const r = p.r, filas = filasFlujo(lect, r.del);
+    const r = p.r, filas = filasFlujo(r.del), hay = r.con.length > 0;
     return "<h2>" + esc(p.titulo) + "</h2><table class=\"res\">" +
-      "<tr><th>Promedio por día</th><td>" + (r.del.length ? esc(m3Txt(r.promedio)) + " m³" : "—") + "</td></tr>" +
-      "<tr><th>Total del período</th><td>" + (r.del.length ? esc(m3Txt(r.total)) + " m³" : "—") + "</td></tr>" +
-      "<tr><th>Lectura más alta</th><td>" + (r.max ? esc(m3Txt(r.max.m3)) + " m³, " + esc(diaTxt(r.max.dia).toLowerCase()) : "—") + "</td></tr>" +
-      "<tr><th>Lectura más baja</th><td>" + (r.min ? esc(m3Txt(r.min.m3)) + " m³, " + esc(diaTxt(r.min.dia).toLowerCase()) : "—") + "</td></tr>" +
+      "<tr><th>Consumo promedio por día</th><td>" + (hay ? esc(promTxt(r.promedio)) + " m³ (consumo dividido por " + r.diasCubiertos + (r.diasCubiertos === 1 ? " día)" : " días)") : "—") + "</td></tr>" +
+      "<tr><th>Consumo del período</th><td>" + (hay ? esc(m3Txt(r.total)) + " m³" : "—") + "</td></tr>" +
+      "<tr><th>Mayor consumo</th><td>" + (r.max ? esc(m3Txt(r.max.consumo)) + " m³, " + esc(diaTxt(r.max.dia).toLowerCase()) + (r.max.dias > 1 ? ", en " + r.max.dias + " días" : "") : "—") + "</td></tr>" +
+      "<tr><th>Menor consumo</th><td>" + (r.min ? esc(m3Txt(r.min.consumo)) + " m³, " + esc(diaTxt(r.min.dia).toLowerCase()) + (r.min.dias > 1 ? ", en " + r.min.dias + " días" : "") : "—") + "</td></tr>" +
       "<tr><th>Días con lectura</th><td>" + r.del.length + " de " + r.transcurridos + " días transcurridos</td></tr></table>" +
       (filas.length ? "<table><tr>" + CAB_FLUJO.map((c, i) => "<th" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</th>").join("") + "</tr>" +
         filas.map(f => "<tr>" + f.map((c, i) => "<td" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</td>").join("") + "</tr>").join("") + "</table>"
@@ -1134,7 +1141,7 @@ $("fl-generar").addEventListener("click", async () => {
     "@media print{.barra{display:none}main{padding:0}}</style></head><body><main>" +
     "<header><div><h1>Reporte de flujómetro</h1><p>Semanal y mensual · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
     '<div class="barra"><button type="button" onclick="window.print()">Imprimir o guardar como PDF</button></div>' + periodos.map(bloque).join("") +
-    '<p class="pie">Reporte generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". Cada día cuenta con su última lectura enviada.</p></main></body></html>";
+    '<p class="pie">Reporte generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". El consumo de cada día es su lectura del medidor menos la lectura anterior.</p></main></body></html>";
   if (urlFlujo) URL.revokeObjectURL(urlFlujo);
   urlFlujo = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
   est.textContent = "Reporte listo.";
