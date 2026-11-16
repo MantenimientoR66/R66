@@ -205,6 +205,7 @@ end $$;
 -- y entrega a cada técnico una clave temporal desde su panel.
 insert into public.usuarios(usuario, nombre, rol, debe_cambiar) values
   ('admin', 'Administrador', 'admin', true),
+  ('ladelrio', 'Luis Del Río', 'admin', false),
   ('ricardo.diaz', 'Ricardo Díaz', 'trabajador', true),
   ('luis.jimenez', 'Luis Jiménez', 'trabajador', true),
   ('manuel.pacheco', 'Manuel Pacheco', 'trabajador', true)
