@@ -11,6 +11,7 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 
 - Cada técnico hace sus OT de a una: solo puede aceptar una nueva cuando envió el reporte de la que tiene en ejecución (o corrigió la que le devolvieron).
 - Las OT asignadas forman una cola por técnico y solo puede aceptar la primera. El administrador cambia el orden en **Órdenes > Cola de trabajo por técnico** con las flechas o el botón **Primero**.
+- Mientras un técnico no acepte una OT, el administrador puede pasarla a otro técnico desde la misma OT (**Mover OT**). Entra al final de la cola del nuevo técnico.
 - Las OT nuevas entran al final de la cola. La ronda de luminarias y el flujómetro, que son diarios, entran al principio.
 - Cada OT tiene 4 horas como máximo desde que se acepta hasta que se envía el reporte. Pasado ese tiempo aparece en rojo para el técnico y el administrador, y como alerta en el Panel.
 - Las incidencias fuera de horario no entran en la cola: se aceptan en cualquier momento.

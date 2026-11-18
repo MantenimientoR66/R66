@@ -1037,6 +1037,24 @@ begin
   delete from public.ordenes where id = p_ot;
 end $$;
 
+-- El administrador pasa una OT que nadie ha aceptado a otro técnico. Entra al final de la cola del nuevo técnico.
+create or replace function public.ot_reasignar(p_token text, p_ot uuid, p_trabajador uuid) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare o public.ordenes;
+begin
+  perform public.ot_admin(p_token);
+  perform 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo for update;
+  if not found then raise exception 'Elige un técnico activo.'; end if;
+  select * into o from public.ordenes where id = p_ot for update;
+  if not found or o.tipo <> 'ot' then raise exception 'Solo se pueden mover órdenes de trabajo.'; end if;
+  if o.estado <> 'asignada' then raise exception 'Solo se puede mover una OT que el técnico aún no acepta.'; end if;
+  if o.trabajador_id = p_trabajador then raise exception 'La OT ya está asignada a ese técnico.'; end if;
+  update public.ordenes set trabajador_id = p_trabajador,
+    orden_cola = (select coalesce(max(orden_cola), 0) + 1 from public.ordenes
+                   where trabajador_id = p_trabajador and tipo = 'ot' and estado = 'asignada')
+   where id = p_ot;
+end $$;
+
 -- ---------- autohallazgos ----------
 -- El técnico informa algo que encontró en terreno. No es OT ni incidencia: lleva su propia numeración (AH-0001)
 -- y queda "por revisar" hasta que el administrador lo marca como revisado.
