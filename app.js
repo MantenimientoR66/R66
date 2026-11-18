@@ -248,7 +248,22 @@ function nivelInc(o){
   return hs >= PLAZO_INC_H ? 2 : hs >= ALERTA_INC_H ? 1 : 0;
 }
 function plazoInc(o){ return new Date(new Date(o.creada).getTime() + PLAZO_INC_H * 3600000); }
-function firmaAlertas(){ return S.ordenes.map(o => nivelInc(o)).join(""); }
+
+/* ---------- OT de a una: cola y tiempo máximo en ejecución ---------- */
+// Cada OT tiene 4 horas como máximo desde que el técnico la acepta hasta que envía su reporte; pasado eso queda en alerta.
+const MAX_EJEC_H = 4;
+function horasEjec(o){ return o.tipo !== "incidencia" && o.estado === "ejecucion" && o.aceptada ? (Date.now() - new Date(o.aceptada)) / 3600000 : 0; }
+function excedida(o){ return horasEjec(o) >= MAX_EJEC_H; }
+function duracionTxt(x){
+  const m = Math.max(0, Math.floor(x * 60)), hs = Math.floor(m / 60);
+  return hs ? hs + " h " + String(m % 60).padStart(2, "0") + " min" : m + " min";
+}
+function porCola(a, b){ return ((a.orden_cola ?? 1e9) - (b.orden_cola ?? 1e9)) || (a.numero - b.numero); }
+// Cola de un técnico: sus OT asignadas que aún no acepta, en el orden que definió el administrador.
+// El técnico solo recibe sus propias OT, así que para él no hace falta filtrar por técnico.
+function colaDe(tid){ return S.ordenes.filter(o => o.tipo !== "incidencia" && o.estado === "asignada" && (!tid || o.trabajador_id === tid)).sort(porCola); }
+function activasDe(tid){ return S.ordenes.filter(o => o.tipo !== "incidencia" && (o.estado === "ejecucion" || o.estado === "devuelta") && (!tid || o.trabajador_id === tid)); }
+function firmaAlertas(){ return S.ordenes.map(o => nivelInc(o) + (o.estado === "ejecucion" ? "." + Math.floor(horasEjec(o) * 12) : "")).join(""); }
 let ultimaFirma = "";
 setInterval(() => {            // el paso del tiempo cambia las alertas aunque no cambien los datos
   if ($("v-app").hidden) return;
@@ -265,15 +280,26 @@ function render(){
   const jefe = S.admin || S.control;
   const peso = jefe ? {revision:0, devuelta:1, ejecucion:2, asignada:3, cerrada:4} : {devuelta:0, ejecucion:1, asignada:2, revision:3, cerrada:4};
   ultimaFirma = firmaAlertas();
-  const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (peso[a.estado]-peso[b.estado]) || (new Date(b.creada) - new Date(a.creada)));
+  const enCola = (a, b) => a.estado === "asignada" && b.estado === "asignada"
+    ? ((a.tipo === "incidencia" ? 0 : 1) - (b.tipo === "incidencia" ? 0 : 1)) || (a.tipo !== "incidencia" && b.tipo !== "incidencia" ? porCola(a, b) : 0) : 0;
+  const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (excedida(b) - excedida(a)) || (peso[a.estado]-peso[b.estado]) || enCola(a, b) || (new Date(b.creada) - new Date(a.creada)));
   const enAlerta = jefe ? items.filter(o => nivelInc(o) > 0) : [];
-  const ban = $("alerta-inc");
-  ban.hidden = !enAlerta.length;
+  const otAlerta = items.filter(excedida);
+  const ban = $("alerta-inc"), lineas = [];
   if (enAlerta.length){
     const venc = enAlerta.filter(o => nivelInc(o) === 2).length;
-    ban.textContent = (enAlerta.length === 1 ? "1 incidencia lleva" : enAlerta.length + " incidencias llevan") + " más de " + ALERTA_INC_H + " horas sin cerrar" +
-      (venc ? "; " + (venc === 1 ? "1 ya superó" : venc + " ya superaron") + " el plazo de " + PLAZO_INC_H + " horas." : ".");
+    lineas.push((enAlerta.length === 1 ? "1 incidencia lleva" : enAlerta.length + " incidencias llevan") + " más de " + ALERTA_INC_H + " horas sin cerrar" +
+      (venc ? "; " + (venc === 1 ? "1 ya superó" : venc + " ya superaron") + " el plazo de " + PLAZO_INC_H + " horas." : "."));
   }
+  if (otAlerta.length){
+    lineas.push(S.admin
+      ? (otAlerta.length === 1 ? "1 OT lleva" : otAlerta.length + " OT llevan") + " más de " + MAX_EJEC_H + " horas en ejecución: " +
+        otAlerta.map(o => numTxt(o.numero) + " de " + o.trabajador + " (" + duracionTxt(horasEjec(o)) + ")").join(", ") + "."
+      : "Tu " + numTxt(otAlerta[0].numero) + " lleva más de " + MAX_EJEC_H + " horas en ejecución. Termínala y envía el reporte.");
+  }
+  ban.hidden = !lineas.length;
+  ban.textContent = lineas.join("\n");
+  renderCola();
   const cuenta = {todas:items.length, pendientes:0, ejecucion:0, revision:0, cerrada:0};
   for (const o of items){
     if (o.estado === "asignada") cuenta.pendientes++; else if (o.estado === "devuelta") cuenta.ejecucion++; else cuenta[o.estado]++;
@@ -322,9 +348,12 @@ function imagen(o, n){
 function tarjeta(o){
   const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", jefe = S.admin || S.control;
   const necesitaAccion = (jefe && inc && estado !== "cerrada") || (S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "ejecucion" || estado === "devuelta"));
-  const nivel = nivelInc(o), roja = jefe && nivel > 0;
-  const rotEstado = roja ? (nivel === 2 ? "Plazo vencido" : "Sin cerrar hace " + Math.floor(horasInc(o)) + " h")
+  const nivel = nivelInc(o), exc = excedida(o), roja = (jefe && nivel > 0) || exc;
+  const rotEstado = jefe && nivel > 0 ? (nivel === 2 ? "Plazo vencido" : "Sin cerrar hace " + Math.floor(horasInc(o)) + " h")
+    : exc ? "Más de " + MAX_EJEC_H + " h en ejecución"
     : inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
+  const cola = !inc && estado === "asignada" ? colaDe(S.admin ? o.trabajador_id : null) : null;
+  const lugar = cola ? cola.findIndex(x => x.id === id) + 1 : 0;
   const abierto = (id in S.abiertos) ? S.abiertos[id] : necesitaAccion;
   const vencida = estado !== "cerrada" && o.fecha_limite && o.fecha_limite < hoyIso();
   const meta = h("div", {class:"meta"},
@@ -335,7 +364,9 @@ function tarjeta(o){
     o.origen === "ronda" ? h("span", null, "Ronda automática de turno") : null,
     o.origen === "flujometro" ? h("span", null, "Lectura diaria automática") : null,
     !inc && o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
-    o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null);
+    o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null,
+    lugar ? h("span", null, lugar === 1 ? "Primera en la cola" : "Lugar " + lugar + " en la cola") : null,
+    !inc && estado === "ejecucion" && o.aceptada ? h("span", {class: exc ? "vencida" : null}, "En ejecución hace " + duracionTxt(horasEjec(o))) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
     onclick: () => { S.abiertos[id] = !abierto; render(); }},
     h("div", {class:"ot-linea"}, h("span", {class:"num"}, (inc ? "INC-" : "OT-") + String(o.numero||0).padStart(4,"0")), h("span", {class:"pill " + (roja ? "e-devuelta" : "e-"+estado)}, rotEstado)),
@@ -355,6 +386,10 @@ function tarjeta(o){
     cuerpo.append(h("p", {class:"nota"}, new Date(o.cerrada) <= plazoInc(o) ? "Cerrada dentro del plazo de " + PLAZO_INC_H + " horas." : "Cerrada fuera del plazo de " + PLAZO_INC_H + " horas."));
   if (estado === "devuelta" && o.nota_devolucion)
     cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), o.nota_devolucion));
+  if (!inc && estado === "ejecucion" && o.aceptada)
+    cuerpo.append(h("p", {class: exc ? "devol" : "nota"}, exc
+      ? "Superó el tiempo máximo de " + MAX_EJEC_H + " horas: lleva " + duracionTxt(horasEjec(o)) + " en ejecución."
+      : "Tiempo máximo: " + MAX_EJEC_H + " horas desde que se aceptó. Lleva " + duracionTxt(horasEjec(o)) + "; queda " + duracionTxt(MAX_EJEC_H - horasEjec(o)) + "."));
 
   const editable = !jefe && (estado === "ejecucion" || estado === "devuelta");
   if (o.enviado && !editable){
@@ -367,13 +402,20 @@ function tarjeta(o){
       h("p", {class:"nota"}, (inc ? "Cierre informado el " : "Reporte enviado el ") + fecha(o.enviado))));
   }
   if (jefe && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, inc ? "Reabierta. Esperando que el técnico la cierre otra vez." : "Esperando que el técnico corrija y reenvíe."));
-  if (jefe && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, inc ? "El técnico de turno aún no la acepta." : "El técnico aún no acepta la OT."));
+  if (jefe && estado === "asignada") cuerpo.append(h("p", {class:"nota"}, inc ? "El técnico de turno aún no la acepta."
+    : "El técnico aún no acepta la OT. Es la " + lugar + "ª de su cola; cambia el orden en Cola de trabajo, arriba."));
   if (jefe && estado === "ejecucion") cuerpo.append(h("p", {class:"nota"}, inc ? "En ejecución: el técnico de turno la aceptó y aún no la cierra." : "En ejecución: el técnico la aceptó y aún no envía su reporte."));
-  if (!jefe && estado === "asignada"){
+  const activa = !jefe && !inc && estado === "asignada" ? activasDe(null)[0] : null;
+  if (activa)
+    cuerpo.append(h("p", {class:"nota"}, "Las OT se hacen de a una. Primero termina la " + numTxt(activa.numero) +
+      (activa.estado === "devuelta" ? ", que te devolvieron para corregir," : "") + " y envía su reporte."));
+  else if (!jefe && !inc && estado === "asignada" && lugar > 1)
+    cuerpo.append(h("p", {class:"nota"}, "Está en el lugar " + lugar + " de tu cola. Te toca primero la " + numTxt(cola[0].numero) + "; el administrador define el orden."));
+  else if (!jefe && estado === "asignada"){
     cuerpo.append(h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"button", id:"ace-"+id, disabled:!!S.ocupado[id],
         onclick: () => accion(id, "ot_aceptar", {p_ot:id}, () => { S.abiertos[id] = true; })}, S.ocupado[id] ? "Aceptando…" : inc ? "Aceptar incidencia" : "Aceptar OT"),
-      h("span", {class:"nota"}, "Al aceptarla queda en ejecución y podrás " + (inc ? "cerrarla." : "enviar tu reporte."))));
+      h("span", {class:"nota"}, "Al aceptarla queda en ejecución y podrás " + (inc ? "cerrarla." : "enviar tu reporte. Tienes " + MAX_EJEC_H + " horas como máximo."))));
   }
   if (editable) cuerpo.append(formReporte(o));
   if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
@@ -390,6 +432,57 @@ function tarjeta(o){
   if (S.admin) cuerpo.append(accionesAdmin(o));
   card.append(cuerpo);
   return card;
+}
+
+/* ---------- cola de trabajo (administrador) ---------- */
+function renderCola(){
+  const sec = $("cola");
+  if (!S.admin){ sec.hidden = true; return; }
+  const caja = $("cola-lista"); caja.replaceChildren();
+  const ids = new Set(S.trabajadores.filter(t => t.rol === "trabajador" && t.activo).map(t => t.id));
+  for (const o of S.ordenes) if (o.tipo !== "incidencia" && o.estado !== "cerrada" && o.estado !== "revision") ids.add(o.trabajador_id);
+  const nombre = id => (S.trabajadores.find(t => t.id === id) || {}).nombre || (S.ordenes.find(o => o.trabajador_id === id) || {}).trabajador || "Técnico";
+  const tecnicos = [...ids].map(id => ({id, nombre:nombre(id)})).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  if (!tecnicos.length) caja.append(h("p", {class:"nota"}, "No hay técnicos activos."));
+  for (const t of tecnicos){
+    const cola = colaDe(t.id), act = activasDe(t.id);
+    const bloq = h("div", {class:"trab"}, h("div", {class:"trab-cab"}, h("b", null, t.nombre),
+      h("span", {class:"usr"}, cola.length ? cola.length + " OT en cola" : "Cola vacía")));
+    if (!act.length) bloq.append(h("p", {class:"nota"}, "Sin OT en ejecución." + (cola.length ? " Puede aceptar la " + numTxt(cola[0].numero) + "." : "")));
+    for (const a of act){
+      const exc = excedida(a);
+      bloq.append(h("p", {class: exc ? "devol" : "nota"}, h("b", null, numTxt(a.numero) + " · " + a.titulo), " — ",
+        a.estado === "devuelta" ? "devuelta para corregir"
+        : "en ejecución hace " + duracionTxt(horasEjec(a)) + (exc ? ", superó las " + MAX_EJEC_H + " horas" : "")));
+    }
+    if (cola.length){
+      const ol = h("ol", {class:"cola"});
+      cola.forEach((o, i) => {
+        const oc = !!S.ocupado["cola"];
+        ol.append(h("li", null,
+          h("span", {class:"cola-t"}, h("b", null, numTxt(o.numero)), " " + o.titulo,
+            o.fecha_limite ? h("span", {class:"usr"}, " · límite " + fechaCorta(o.fecha_limite)) : null,
+            o.prioridad && o.prioridad !== "Normal" ? h("span", {class:"usr"}, " · " + o.prioridad.toLowerCase()) : null),
+          h("span", {class:"acciones"},
+            h("button", {class:"btn chico", type:"button", id:"cs-"+o.id, disabled: oc || i === 0, "aria-label":"Subir " + numTxt(o.numero),
+              onclick: () => moverCola(o.id, "subir")}, "↑"),
+            h("button", {class:"btn chico", type:"button", id:"cb-"+o.id, disabled: oc || i === cola.length - 1, "aria-label":"Bajar " + numTxt(o.numero),
+              onclick: () => moverCola(o.id, "bajar")}, "↓"),
+            i > 1 ? h("button", {class:"btn chico", type:"button", id:"cp-"+o.id, disabled: oc,
+              onclick: () => moverCola(o.id, "primero")}, "Primero") : null)));
+      });
+      bloq.append(ol);
+    }
+    caja.append(bloq);
+  }
+}
+async function moverCola(id, a){
+  if (S.ocupado["cola"]) return;
+  S.ocupado["cola"] = true; $("cola-estado").textContent = ""; renderCola();
+  try { await rpc("ot_cola_mover", {p_token:S.token, p_ot:id, p_a:a}); }
+  catch (e){ $("cola-estado").textContent = e.message; }
+  delete S.ocupado["cola"];
+  await cargar(); render();
 }
 
 function formReporte(o){
@@ -867,7 +960,10 @@ function renderReportes(){
       const nv = nivelInc(o);
       if (nv) alertas.push([isoLocal(o.creada), o.trabajador + " no ha cerrado la incidencia INC-" + String(o.numero).padStart(4,"0") + ", informada el " + fecha(o.creada) +
         (nv === 2 ? ". Superó el plazo de " + PLAZO_INC_H + " horas." : ". Lleva más de " + ALERTA_INC_H + " horas; el plazo vence el " + fecha(plazoInc(o)) + ".")]);
-    } else if (o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
+    } else if (excedida(o)){
+      alertas.push([isoLocal(o.aceptada), o.trabajador + " lleva " + duracionTxt(horasEjec(o)) + " con " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + ") en ejecución. El máximo es " + MAX_EJEC_H + " horas."]);
+    }
+    if (o.tipo !== "incidencia" && o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
       alertas.push([o.fecha_limite, o.trabajador + " no realizó " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + "), programada para el " + diaTxt(o.fecha_limite).toLowerCase() +
         (o.estado === "devuelta" ? ". Está devuelta para corregir." : ".")]);
     }
@@ -889,6 +985,7 @@ function renderReportes(){
   const tCerrar = lista => prom(lista.filter(o => o.enviado && o.cerrada && o.estado === "cerrada").map(o => horasEntre(o.enviado, o.cerrada)));
   const tTotal = lista => prom(lista.filter(o => o.cerrada && o.estado === "cerrada").map(o => horasEntre(o.creada, o.cerrada)));
   const enEjec = S.ordenes.filter(o => o.estado === "ejecucion");
+  const ejecutadas = ots.filter(o => o.aceptada && o.enviado && hecha(o)), aTiempoEjec = ejecutadas.filter(o => horasEntre(o.aceptada, o.enviado) <= MAX_EJEC_H);
 
   caja.append(h("div", {class:"tiles"},
     tile("Cumplimiento preventivo, " + mesTxt(mes).toLowerCase(), pct(prevHechos, prevMes.length), prevHechos + " de " + prevMes.length + " preventivos realizados", true),
@@ -904,11 +1001,12 @@ function renderReportes(){
     tile("Tiempo en ejecución", horasTxt(tEjecutar(ots)), "desde que la acepta hasta que envía su reporte"),
     tile("Espera hasta el cierre", horasTxt(tCerrar(ots)), "desde el reporte hasta que la cierras"),
     tile("Total, de creada a cerrada", horasTxt(tTotal(ots)), "promedio de las OT cerradas del mes"),
-    tile("En ejecución ahora", String(enEjec.length), enEjec.length ? "aceptadas y sin reporte todavía" : "ninguna en este momento"),
+    tile("En ejecución ahora", String(enEjec.length), enEjec.length ? "aceptadas y sin reporte todavía" + (enEjec.filter(excedida).length ? "; " + enEjec.filter(excedida).length + " con más de " + MAX_EJEC_H + " h" : "") : "ninguna en este momento"),
+    tile("Ejecutadas dentro de " + MAX_EJEC_H + " h", ejecutadas.length ? pct(aTiempoEjec.length, ejecutadas.length) : "—", aTiempoEjec.length + " de " + ejecutadas.length + " OT, desde que se aceptan hasta el reporte"),
     tile("Incidencias: espera hasta aceptar", horasTxt(tAceptar(incs)), "desde que se informa hasta que el técnico de turno la acepta")));
 
   caja.append(h("h3", null, "Alertas"));
-  if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar ni incidencias abiertas hace más de 12 horas."));
+  if (!alertas.length) caja.append(h("p", {class:"nota"}, "Sin alertas: no hay trabajos vencidos sin realizar, OT con más de " + MAX_EJEC_H + " horas en ejecución ni incidencias abiertas hace más de 12 horas."));
   else {
     caja.append(h("div", {class:"lista"}, alertas.slice(0, 5).map(al => h("p", {class:"mensaje"}, al[1]))));
     if (alertas.length > 5) caja.append(h("details", null, h("summary", {class:"mas"}, "Ver las otras " + (alertas.length - 5) + " alertas"),
@@ -1261,7 +1359,7 @@ $("he-excel").addEventListener("click", () => {
 });
 
 /* ---------- menú del administrador ---------- */
-const VISTAS = {ordenes:["filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], horas:["horas"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
+const VISTAS = {ordenes:["cola","filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], horas:["horas"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
 function mostrarVista(v){
   S.vista = VISTAS[v] ? v : "ordenes";
   for (const k in VISTAS) for (const id of VISTAS[k]){

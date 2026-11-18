@@ -813,7 +813,7 @@ begin
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
       'telefono', case when u.rol in ('admin','control') and o.tipo = 'incidencia' then t.telefono end,
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
-      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada,
+      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada, 'orden_cola', o.orden_cola,
       'codigo_actividad', o.codigo_actividad, 'metros_cubicos', o.metros_cubicos, 'descripcion_realizada', o.descripcion_realizada,
       'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado,
       'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada)
@@ -883,15 +883,78 @@ begin
   return n;
 end $$;
 
--- El técnico acepta la orden: queda en ejecución y se guarda la hora, para medir cuánto tarda en partir.
+-- ---------- cola de trabajo: las OT se hacen de a una ----------
+-- Cada técnico tiene una cola con sus OT asignadas. Solo puede aceptar la primera de la cola y solo si no tiene
+-- otra OT en ejecución o devuelta para corregir. El administrador cambia el orden. Las incidencias quedan fuera de la cola.
+alter table public.ordenes add column if not exists orden_cola int; -- posición en la cola del técnico (la menor va primero)
+
+-- Las OT nuevas entran al final de la cola; la ronda de luminarias y el flujómetro, que son diarios y con hora fija, entran al principio.
+create or replace function public.ot_cola_nueva() returns trigger
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if new.tipo = 'ot' and new.orden_cola is null then
+    if new.origen in ('ronda','flujometro') then
+      select coalesce(min(orden_cola), 1) - 1 into new.orden_cola from public.ordenes
+       where trabajador_id = new.trabajador_id and tipo = 'ot' and estado = 'asignada';
+    else
+      select coalesce(max(orden_cola), 0) + 1 into new.orden_cola from public.ordenes
+       where trabajador_id = new.trabajador_id and tipo = 'ot' and estado = 'asignada';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists ot_cola_nueva on public.ordenes;
+create trigger ot_cola_nueva before insert on public.ordenes for each row execute function public.ot_cola_nueva();
+
+-- Las OT que ya estaban asignadas sin posición se ordenan por fecha límite y luego por creación.
+update public.ordenes o set orden_cola = x.n
+  from (select id, row_number() over (partition by trabajador_id order by fecha_limite nulls last, creada) n
+          from public.ordenes where tipo = 'ot' and estado = 'asignada' and orden_cola is null) x
+ where o.id = x.id;
+
+-- El técnico acepta la orden: queda en ejecución y se guarda la hora, para medir cuánto tarda en partir y en terminar.
 create or replace function public.ot_aceptar(p_token text, p_ot uuid) returns void
 language plpgsql security definer set search_path = public, extensions as $$
-declare u public.usuarios;
+declare u public.usuarios; o public.ordenes; otra public.ordenes; primera public.ordenes;
 begin
   u := public.ot_quien(p_token);
-  update public.ordenes set estado = 'ejecucion', aceptada = now()
-   where id = p_ot and trabajador_id = u.id and estado = 'asignada';
+  perform 1 from public.usuarios where id = u.id for update; -- dos clics seguidos no aceptan dos OT
+  select * into o from public.ordenes where id = p_ot and trabajador_id = u.id and estado = 'asignada';
   if not found then raise exception 'Esta orden no está asignada a ti o ya fue aceptada.'; end if;
+  if o.tipo = 'ot' then
+    select * into otra from public.ordenes
+     where trabajador_id = u.id and tipo = 'ot' and estado in ('ejecucion','devuelta') and id <> o.id
+     order by aceptada nulls last limit 1;
+    if found then
+      raise exception 'Primero termina la OT-% y envía su reporte. Las OT se hacen de a una.', lpad(otra.numero::text, 4, '0');
+    end if;
+    select * into primera from public.ordenes where trabajador_id = u.id and tipo = 'ot' and estado = 'asignada'
+     order by orden_cola nulls last, numero limit 1;
+    if primera.id <> o.id then
+      raise exception 'Te toca primero la OT-%. El administrador define el orden de tus OT.', lpad(primera.numero::text, 4, '0');
+    end if;
+  end if;
+  update public.ordenes set estado = 'ejecucion', aceptada = now() where id = o.id;
+end $$;
+
+-- El administrador mueve una OT en la cola de su técnico: 'subir', 'bajar' o 'primero'.
+create or replace function public.ot_cola_mover(p_token text, p_ot uuid, p_a text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare o public.ordenes; ids uuid[]; i int; j int;
+begin
+  perform public.ot_admin(p_token);
+  select * into o from public.ordenes where id = p_ot and tipo = 'ot' and estado = 'asignada';
+  if not found then raise exception 'Solo se puede ordenar una OT que el técnico aún no acepta.'; end if;
+  perform 1 from public.usuarios where id = o.trabajador_id for update;
+  select array_agg(id order by orden_cola nulls last, numero) into ids from public.ordenes
+   where trabajador_id = o.trabajador_id and tipo = 'ot' and estado = 'asignada';
+  i := array_position(ids, p_ot);
+  j := case p_a when 'subir' then greatest(i - 1, 1) when 'bajar' then least(i + 1, array_length(ids, 1)) when 'primero' then 1 else i end;
+  if j <> i then
+    ids := array_remove(ids, p_ot);
+    ids := ids[1:j-1] || p_ot || ids[j:];
+  end if;
+  update public.ordenes x set orden_cola = t.n from unnest(ids) with ordinality as t(id, n) where x.id = t.id;
 end $$;
 
 drop function if exists public.ot_reportar(text, uuid, text, text, text);
@@ -973,7 +1036,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
+declare f record; internas text[] := array['ot_cola_nueva','ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
