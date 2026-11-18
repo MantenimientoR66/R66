@@ -58,8 +58,7 @@ p{margin:0}
 .mensaje.bien{border-color:var(--ok)}
 [hidden]{display:none!important}
 
-.filtros{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
-@media (max-width:640px){.filtros{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}}
+.filtros{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
 .filtro{background:var(--panel);border:1px solid var(--linea);border-radius:6px;padding:8px 10px;text-align:left;color:var(--tinta);font:inherit;cursor:pointer;display:flex;flex-direction:column}
 .filtro b{font:700 1.6rem/1.1 var(--display);color:var(--acento);font-variant-numeric:tabular-nums}
 .filtro span{font-size:.85rem;color:var(--tenue)}
@@ -311,6 +310,44 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </form>
     </section>
 
+    <section class="panel" id="hallazgo" hidden>
+      <details>
+        <summary>Informar un autohallazgo</summary>
+        <form id="form-hal" class="lista" autocomplete="off">
+          <p class="nota">Algo que encontraste en terreno y que no viene en una OT. Queda con código AH y lo revisa el administrador.</p>
+          <div class="fila">
+            <label for="h-titulo">Qué encontraste
+              <input id="h-titulo" required maxlength="120" placeholder="Ej.: Luminaria apagada">
+            </label>
+            <label for="h-lugar">Dónde
+              <input id="h-lugar" required maxlength="120" placeholder="Ej.: Km 33, calzada poniente">
+            </label>
+          </div>
+          <label for="h-desc">Descripción del hallazgo
+            <textarea id="h-desc" required maxlength="4000" placeholder="Qué viste, en qué estado está, qué riesgo tiene…"></textarea>
+          </label>
+          <label for="h-act">Código de actividad (opcional)
+            <select id="h-act"></select>
+          </label>
+          <label for="h-hecho">Qué hiciste (opcional)
+            <textarea id="h-hecho" maxlength="4000" style="min-height:60px" placeholder="Si lo reparaste, señalizaste o avisaste a alguien."></textarea>
+          </label>
+          <div class="fila">
+            <label for="h-foto">Foto del hallazgo
+              <input id="h-foto" type="file" accept="image/*" required>
+            </label>
+            <label for="h-foto2">Segunda foto (opcional)
+              <input id="h-foto2" type="file" accept="image/*">
+            </label>
+          </div>
+          <div class="acciones">
+            <button class="btn principal" id="h-enviar" type="submit">Enviar autohallazgo</button>
+            <span class="nota" id="h-estado" role="status"></span>
+          </div>
+        </form>
+      </details>
+    </section>
+
     <section class="lista" id="lista" aria-live="polite"></section>
 
     <section class="panel" id="reportes" hidden>
@@ -319,8 +356,11 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
         <label for="r-mes">Mes
           <input id="r-mes" type="month">
         </label>
+        <label for="inf-rango">Período del informe
+          <select id="inf-rango"><option value="mes">Mes completo</option></select>
+        </label>
         <div class="acciones">
-          <button class="btn" type="button" id="inf-generar">Generar informe del mes con fotos</button>
+          <button class="btn" type="button" id="inf-generar">Generar informe con fotos</button>
         </div>
       </div>
       <div class="acciones" id="inf-enlaces"></div>
@@ -495,9 +535,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=17"></script>
-<script src="calendario.js?v=17"></script>
-<script src="app.js?v=17"></script>
-<script src="bitacoras.js"></script>
+<script src="config.js?v=18"></script>
+<script src="calendario.js?v=18"></script>
+<script src="app.js?v=18"></script>
+<script src="bitacoras.js?v=18"></script>
 </body>
 </html>

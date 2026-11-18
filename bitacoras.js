@@ -72,7 +72,7 @@ function filaDe(o){
 function agrupar(ordenes, dia, criterio, quien){
   const por = {}; let sinFila = 0;
   for (const o of ordenes){
-    if (o.tipo === "incidencia" || !hecha(o)) continue;
+    if (o.tipo === "incidencia" || o.tipo === "hallazgo" || !hecha(o)) continue;   // las incidencias y los autohallazgos no van en la bitácora
     const diaOt = criterio === "programada" ? (o.fecha_limite || isoLocal(o.creada)) : isoLocal(o.enviado);
     if (diaOt !== dia) continue;
     if (quien && o.trabajador_id !== quien) continue;
