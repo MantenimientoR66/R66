@@ -1010,6 +1010,9 @@ language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform public.ot_admin(p_token);
   if length(trim(coalesce(p_nota,''))) = 0 then raise exception 'Escribe en la nota qué debe corregir el trabajador.'; end if;
+  if exists (select 1 from public.ordenes where id = p_ot and tipo = 'hallazgo') then
+    raise exception 'Los autohallazgos no se devuelven: márcalo como revisado con una nota, o elimínalo.';
+  end if;
   update public.ordenes set estado = 'devuelta', nota_devolucion = trim(p_nota)
     where id = p_ot and estado = 'revision';
   if not found then raise exception 'Solo se puede devolver una orden con reporte enviado.'; end if;
@@ -1032,6 +1035,34 @@ language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform public.ot_admin(p_token);
   delete from public.ordenes where id = p_ot;
+end $$;
+
+-- ---------- autohallazgos ----------
+-- El técnico informa algo que encontró en terreno. No es OT ni incidencia: lleva su propia numeración (AH-0001)
+-- y queda "por revisar" hasta que el administrador lo marca como revisado.
+create sequence if not exists public.ordenes_hallazgo_seq;
+create or replace function public.ot_hallazgo_crear(p_token text, p_titulo text, p_detalle text, p_ubicacion text,
+  p_actividad text, p_realizado text, p_foto text, p_foto2 text default null) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; n int;
+begin
+  u := public.ot_quien(p_token);
+  if u.rol <> 'trabajador' then raise exception 'Solo los técnicos informan autohallazgos.'; end if;
+  if length(trim(coalesce(p_titulo,''))) = 0 then raise exception 'Escribe qué encontraste.'; end if;
+  if length(trim(coalesce(p_ubicacion,''))) = 0 then raise exception 'Escribe dónde lo encontraste.'; end if;
+  if length(trim(coalesce(p_detalle,''))) = 0 then raise exception 'Describe el hallazgo.'; end if;
+  if p_foto is null then raise exception 'Agrega una foto del hallazgo.'; end if;
+  if (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000)
+     or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
+    raise exception 'La foto no es válida o es demasiado grande.';
+  end if;
+  n := nextval('public.ordenes_hallazgo_seq');
+  insert into public.ordenes(numero, tipo, origen, trabajador_id, creada_por, titulo, detalle, ubicacion, actividad, codigo_actividad,
+                             descripcion_realizada, foto, foto2, estado, enviado)
+  values (n, 'hallazgo', 'hallazgo', u.id, u.id, left(trim(p_titulo), 120), left(trim(p_detalle), 4000), left(trim(p_ubicacion), 120),
+          nullif(trim(coalesce(p_actividad,'')), ''), nullif(trim(coalesce(p_actividad,'')), ''),
+          nullif(left(trim(coalesce(p_realizado,'')), 4000), ''), p_foto, p_foto2, 'revision', now());
+  return n;
 end $$;
 
 -- ---------- permisos de las funciones ----------

@@ -15,6 +15,14 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 - Cada OT tiene 4 horas como máximo desde que se acepta hasta que se envía el reporte. Pasado ese tiempo aparece en rojo para el técnico y el administrador, y como alerta en el Panel.
 - Las incidencias fuera de horario no entran en la cola: se aceptan en cualquier momento.
 
+## Autohallazgos
+
+- El técnico informa lo que encuentra en terreno desde **Informar un autohallazgo**: qué encontró, dónde, descripción, foto (obligatoria, más una segunda opcional), y opcionalmente el código de actividad y lo que hizo.
+- No lleva número de OT ni de incidencia: tiene su propia numeración, **AH-0001**, AH-0002…
+- Llega al administrador como **Por revisar**. El administrador lo marca como revisado (con una nota opcional) o lo elimina. No se devuelve al técnico.
+- El filtro **Autohallazgos** de la lista los muestra todos. El Panel muestra cuántos hubo en el mes y cuántos informó cada técnico.
+- El informe con fotos se puede generar por **mes completo o por semana** (lunes a domingo) e incluye una sección de autohallazgos. No entran en la bitácora diaria.
+
 ## Cuentas iniciales
 
 | Persona | Usuario | Rol |

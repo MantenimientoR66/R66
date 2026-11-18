@@ -59,7 +59,11 @@ function opcionesActividad(sel, valor){
   sel.value = valor || "";
 }
 const FLUJO = "Flujómetro";      // esta actividad solo pide una foto del medidor y los metros cúbicos
-function esFlujo(o){ return o.tipo !== "incidencia" && o.actividad === FLUJO; }
+// Tipos: "ot" (orden de trabajo), "incidencia" (fuera de horario) y "hallazgo" (autohallazgo que informa el técnico).
+function esOT(o){ return o.tipo !== "incidencia" && o.tipo !== "hallazgo"; }
+function esHal(o){ return o.tipo === "hallazgo"; }
+function codigo(o){ return (o.tipo === "incidencia" ? "INC-" : esHal(o) ? "AH-" : "OT-") + String(o.numero || 0).padStart(4,"0"); }
+function esFlujo(o){ return esOT(o) && o.actividad === FLUJO; }
 function m3Txt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:3}); }
 const ESTADOS = {asignada:"Asignada", ejecucion:"En ejecución", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
 
@@ -119,6 +123,7 @@ function abrirApp(){
   $("nueva").hidden = !S.admin; $("equipo").hidden = !S.admin; $("plan").hidden = !S.admin;
   $("incidencia").hidden = !S.control; $("feriados").hidden = !S.admin; $("reportes").hidden = !S.admin;
   $("nav").hidden = !S.admin; $("flujo").hidden = true;
+  $("hallazgo").hidden = S.admin || S.control;
   $("horas").hidden = S.control; $("he-trab-caja").hidden = !S.admin; $("he-excel").hidden = !S.admin;
   S.horas = null; S.hePeriodo = ""; prepararHoras();
   for (const id of ["filtros","lista","cuenta"]) $(id).hidden = false;
@@ -216,8 +221,10 @@ function hoyIso(){
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
 }
 function numTxt(n){ return "OT-" + String(n||0).padStart(4,"0"); }
-function enFiltro(e){
+function enFiltro(o){
+  const e = o.estado;
   if (S.filtro === "todas") return true;
+  if (S.filtro === "hallazgos") return esHal(o);
   if (S.filtro === "pendientes") return e === "asignada";
   if (S.filtro === "ejecucion") return e === "ejecucion" || e === "devuelta";   // una OT devuelta vuelve a manos del técnico
   return e === S.filtro;
@@ -252,7 +259,7 @@ function plazoInc(o){ return new Date(new Date(o.creada).getTime() + PLAZO_INC_H
 /* ---------- OT de a una: cola y tiempo máximo en ejecución ---------- */
 // Cada OT tiene 4 horas como máximo desde que el técnico la acepta hasta que envía su reporte; pasado eso queda en alerta.
 const MAX_EJEC_H = 4;
-function horasEjec(o){ return o.tipo !== "incidencia" && o.estado === "ejecucion" && o.aceptada ? (Date.now() - new Date(o.aceptada)) / 3600000 : 0; }
+function horasEjec(o){ return esOT(o) && o.estado === "ejecucion" && o.aceptada ? (Date.now() - new Date(o.aceptada)) / 3600000 : 0; }
 function excedida(o){ return horasEjec(o) >= MAX_EJEC_H; }
 function duracionTxt(x){
   const m = Math.max(0, Math.floor(x * 60)), hs = Math.floor(m / 60);
@@ -261,8 +268,8 @@ function duracionTxt(x){
 function porCola(a, b){ return ((a.orden_cola ?? 1e9) - (b.orden_cola ?? 1e9)) || (a.numero - b.numero); }
 // Cola de un técnico: sus OT asignadas que aún no acepta, en el orden que definió el administrador.
 // El técnico solo recibe sus propias OT, así que para él no hace falta filtrar por técnico.
-function colaDe(tid){ return S.ordenes.filter(o => o.tipo !== "incidencia" && o.estado === "asignada" && (!tid || o.trabajador_id === tid)).sort(porCola); }
-function activasDe(tid){ return S.ordenes.filter(o => o.tipo !== "incidencia" && (o.estado === "ejecucion" || o.estado === "devuelta") && (!tid || o.trabajador_id === tid)); }
+function colaDe(tid){ return S.ordenes.filter(o => esOT(o) && o.estado === "asignada" && (!tid || o.trabajador_id === tid)).sort(porCola); }
+function activasDe(tid){ return S.ordenes.filter(o => esOT(o) && (o.estado === "ejecucion" || o.estado === "devuelta") && (!tid || o.trabajador_id === tid)); }
 function firmaAlertas(){ return S.ordenes.map(o => nivelInc(o) + (o.estado === "ejecucion" ? "." + Math.floor(horasEjec(o) * 12) : "")).join(""); }
 let ultimaFirma = "";
 setInterval(() => {            // el paso del tiempo cambia las alertas aunque no cambien los datos
@@ -281,7 +288,7 @@ function render(){
   const peso = jefe ? {revision:0, devuelta:1, ejecucion:2, asignada:3, cerrada:4} : {devuelta:0, ejecucion:1, asignada:2, revision:3, cerrada:4};
   ultimaFirma = firmaAlertas();
   const enCola = (a, b) => a.estado === "asignada" && b.estado === "asignada"
-    ? ((a.tipo === "incidencia" ? 0 : 1) - (b.tipo === "incidencia" ? 0 : 1)) || (a.tipo !== "incidencia" && b.tipo !== "incidencia" ? porCola(a, b) : 0) : 0;
+    ? ((a.tipo === "incidencia" ? 0 : 1) - (b.tipo === "incidencia" ? 0 : 1)) || (esOT(a) && esOT(b) ? porCola(a, b) : 0) : 0;
   const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (excedida(b) - excedida(a)) || (peso[a.estado]-peso[b.estado]) || enCola(a, b) || (new Date(b.creada) - new Date(a.creada)));
   const enAlerta = jefe ? items.filter(o => nivelInc(o) > 0) : [];
   const otAlerta = items.filter(excedida);
@@ -300,19 +307,19 @@ function render(){
   ban.hidden = !lineas.length;
   ban.textContent = lineas.join("\n");
   renderCola();
-  const cuenta = {todas:items.length, pendientes:0, ejecucion:0, revision:0, cerrada:0};
+  const cuenta = {todas:items.length, pendientes:0, ejecucion:0, revision:0, cerrada:0, hallazgos:items.filter(esHal).length};
   for (const o of items){
     if (o.estado === "asignada") cuenta.pendientes++; else if (o.estado === "devuelta") cuenta.ejecucion++; else cuenta[o.estado]++;
   }
   const f = $("filtros"); f.replaceChildren();
   const rotulos = [["todas","Todas"],["pendientes", jefe ? "Sin aceptar" : "Por aceptar"],["ejecucion","En ejecución"],
-                   ["revision", jefe ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]];
+                   ["revision", jefe ? "Por revisar" : "Enviadas"],["cerrada","Cerradas"]].concat(S.control ? [] : [["hallazgos","Autohallazgos"]]);
   for (const [k, t] of rotulos){
     f.append(h("button", {class:"filtro", type:"button", id:"f-"+k, "aria-pressed": String(S.filtro===k),
       onclick: () => { S.filtro = k; render(); }}, h("b", null, cuenta[k]), h("span", null, t)));
   }
   const lista = $("lista"); lista.replaceChildren();
-  const vis = items.filter(o => enFiltro(o.estado));
+  const vis = items.filter(enFiltro);
   if (!vis.length){
     lista.append(h("p", {class:"nota"},
       items.length ? "No hay órdenes en este estado."
@@ -346,11 +353,12 @@ function imagen(o, n){
 }
 
 function tarjeta(o){
-  const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", jefe = S.admin || S.control;
+  const estado = o.estado, id = o.id, inc = o.tipo === "incidencia", hal = esHal(o), jefe = S.admin || S.control;
   const necesitaAccion = (jefe && inc && estado !== "cerrada") || (S.admin ? estado === "revision" : S.control ? false : (estado === "asignada" || estado === "ejecucion" || estado === "devuelta"));
   const nivel = nivelInc(o), exc = excedida(o), roja = (jefe && nivel > 0) || exc;
   const rotEstado = jefe && nivel > 0 ? (nivel === 2 ? "Plazo vencido" : "Sin cerrar hace " + Math.floor(horasInc(o)) + " h")
     : exc ? "Más de " + MAX_EJEC_H + " h en ejecución"
+    : hal ? (estado === "cerrada" ? "Revisado" : jefe ? "Por revisar" : "Enviado")
     : inc && estado === "asignada" ? "Abierta" : inc && estado === "devuelta" ? "Reabierta" : ESTADOS[estado];
   const cola = !inc && estado === "asignada" ? colaDe(S.admin ? o.trabajador_id : null) : null;
   const lugar = cola ? cola.findIndex(x => x.id === id) + 1 : 0;
@@ -359,6 +367,8 @@ function tarjeta(o){
   const meta = h("div", {class:"meta"},
     jefe ? h("span", null, o.trabajador) : null,
     inc ? h("span", null, "Incidencia fuera de horario") : null,
+    hal ? h("span", null, "Autohallazgo") : null,
+    hal && !jefe ? h("span", null, "Informado el " + fecha(o.creada)) : null,
     o.ubicacion ? h("span", null, o.ubicacion) : null,
     o.origen === "plan" ? h("span", null, "Preventivo") : null,
     o.origen === "ronda" ? h("span", null, "Ronda automática de turno") : null,
@@ -369,7 +379,7 @@ function tarjeta(o){
     !inc && estado === "ejecucion" && o.aceptada ? h("span", {class: exc ? "vencida" : null}, "En ejecución hace " + duracionTxt(horasEjec(o))) : null);
   const cab = h("button", {class:"ot-cab", type:"button", id:"cab-"+id, "aria-expanded": String(abierto),
     onclick: () => { S.abiertos[id] = !abierto; render(); }},
-    h("div", {class:"ot-linea"}, h("span", {class:"num"}, (inc ? "INC-" : "OT-") + String(o.numero||0).padStart(4,"0")), h("span", {class:"pill " + (roja ? "e-devuelta" : "e-"+estado)}, rotEstado)),
+    h("div", {class:"ot-linea"}, h("span", {class:"num"}, codigo(o)), h("span", {class:"pill " + (roja ? "e-devuelta" : "e-"+estado)}, rotEstado)),
     h("h3", null, o.titulo), meta);
   const card = h("article", {class:"ot e-"+estado + (roja ? " alerta" : "")}, cab);
   if (!abierto) return card;
@@ -377,6 +387,20 @@ function tarjeta(o){
   const cuerpo = h("div", {class:"ot-cuerpo"});
   if (o.actividad) cuerpo.append(bloque("Código de actividad", h("p", {class:"cod"}, o.actividad)));
   if (o.cantidad != null) cuerpo.append(bloque("Cantidad programada", h("p", {class:"cod"}, cantTxt(o.cantidad) + " " + (o.unidad || "UN"))));
+  if (hal){
+    cuerpo.append(bloque("Ubicación", h("p", null, o.ubicacion || "—")));
+    cuerpo.append(bloque("Descripción del hallazgo", h("p", null, o.detalle)));
+    if (o.descripcion_realizada) cuerpo.append(bloque("Qué hizo el técnico", h("p", null, o.descripcion_realizada)));
+    cuerpo.append(bloque(o.tiene_foto2 ? "Fotos" : "Foto", h("div", {class:"fotos"}, imagen(o, 1), o.tiene_foto2 ? imagen(o, 2) : null)));
+    cuerpo.append(h("p", {class:"nota"}, "Informado el " + fecha(o.creada) + " por " + o.trabajador + "."));
+    if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Enviado. Falta que el administrador lo revise."));
+    if (estado === "cerrada")
+      cuerpo.append(bloque("Revisión", h("p", null, "Revisado el " + fecha(o.cerrada) + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
+    if (S.errores[id]) cuerpo.append(h("p", {class:"mensaje"}, S.errores[id]));
+    if (S.admin) cuerpo.append(accionesAdmin(o));
+    card.append(cuerpo);
+    return card;
+  }
   cuerpo.append(bloque(inc ? "Qué está pasando" : "Detalle del trabajo", h("p", null, o.detalle)));
   cuerpo.append(h("p", {class:"nota"}, inc ? "Informada el " + fecha(o.creada) + (o.creada_por ? " por " + o.creada_por : "") : "Asignada el " + fecha(o.creada)));
   if (o.aceptada) cuerpo.append(h("p", {class:"nota"}, "Aceptada el " + fecha(o.aceptada) + ", " + horasTxt(horasEntre(o.creada, o.aceptada)) + " después de " + (inc ? "informada" : "asignada") + "."));
@@ -440,7 +464,7 @@ function renderCola(){
   if (!S.admin){ sec.hidden = true; return; }
   const caja = $("cola-lista"); caja.replaceChildren();
   const ids = new Set(S.trabajadores.filter(t => t.rol === "trabajador" && t.activo).map(t => t.id));
-  for (const o of S.ordenes) if (o.tipo !== "incidencia" && o.estado !== "cerrada" && o.estado !== "revision") ids.add(o.trabajador_id);
+  for (const o of S.ordenes) if (esOT(o) && o.estado !== "cerrada" && o.estado !== "revision") ids.add(o.trabajador_id);
   const nombre = id => (S.trabajadores.find(t => t.id === id) || {}).nombre || (S.ordenes.find(o => o.trabajador_id === id) || {}).trabajador || "Técnico";
   const tecnicos = [...ids].map(id => ({id, nombre:nombre(id)})).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
   if (!tecnicos.length) caja.append(h("p", {class:"nota"}, "No hay técnicos activos."));
@@ -575,18 +599,18 @@ async function enviarFlujo(o){
 }
 
 function accionesAdmin(o){
-  const id = o.id, estado = o.estado, ocupado = !!S.ocupado[id];
+  const id = o.id, estado = o.estado, ocupado = !!S.ocupado[id], hal = esHal(o);
   const caja = h("div", {class:"lista"});
   if (estado === "revision"){
-    caja.append(h("label", {for:"nota-"+id}, "Nota (obligatoria si devuelves la OT)",
+    caja.append(h("label", {for:"nota-"+id}, hal ? "Nota de revisión (opcional)" : "Nota (obligatoria si devuelves la OT)",
       h("textarea", {id:"nota-"+id, maxlength:"1000", value:S.notas[id]||"", style:"min-height:60px",
         oninput: ev => { S.notas[id] = ev.target.value; }})));
   }
   const fila = h("div", {class:"acciones"});
   if (estado === "revision"){
     fila.append(h("button", {class:"btn principal", type:"button", id:"cer-"+id, disabled:ocupado,
-      onclick: () => accion(id, "ot_cerrar", {p_ot:id, p_nota:S.notas[id]||""}, () => { delete S.notas[id]; delete S.abiertos[id]; })}, "Cerrar OT"));
-    fila.append(h("button", {class:"btn", type:"button", id:"dev-"+id, disabled:ocupado,
+      onclick: () => accion(id, "ot_cerrar", {p_ot:id, p_nota:S.notas[id]||""}, () => { delete S.notas[id]; delete S.abiertos[id]; })}, hal ? "Marcar como revisado" : "Cerrar OT"));
+    if (!hal) fila.append(h("button", {class:"btn", type:"button", id:"dev-"+id, disabled:ocupado,
       onclick: () => {
         if (!(S.notas[id]||"").trim()){ S.errores[id] = "Escribe en la nota qué debe corregir el técnico."; render(); return; }
         accion(id, "ot_devolver", {p_ot:id, p_nota:S.notas[id]}, () => { delete S.notas[id]; });
@@ -594,11 +618,11 @@ function accionesAdmin(o){
   }
   if (estado === "cerrada"){
     fila.append(h("button", {class:"btn", type:"button", id:"rea-"+id, disabled:ocupado,
-      onclick: () => accion(id, "ot_reabrir", {p_ot:id})}, "Reabrir OT"));
+      onclick: () => accion(id, "ot_reabrir", {p_ot:id})}, hal ? "Volver a por revisar" : "Reabrir OT"));
   }
   if (S.confirmar[id]){
     fila.append(h("button", {class:"btn peligro", type:"button", id:"eli2-"+id, disabled:ocupado,
-      onclick: () => accion(id, "ot_eliminar", {p_ot:id}, () => { delete S.confirmar[id]; })}, "Sí, eliminar esta OT"),
+      onclick: () => accion(id, "ot_eliminar", {p_ot:id}, () => { delete S.confirmar[id]; })}, hal ? "Sí, eliminar este autohallazgo" : "Sí, eliminar esta OT"),
       h("button", {class:"btn", type:"button", id:"can-"+id, onclick: () => { delete S.confirmar[id]; render(); }}, "Cancelar"));
   } else {
     fila.append(h("button", {class:"btn peligro", type:"button", id:"eli-"+id,
@@ -659,6 +683,31 @@ async function enviarReporte(o){
   delete S.ocupado[id];
   await cargar(); render();
 }
+
+/* ---------- autohallazgos (técnico) ---------- */
+(function(){
+  const sel = $("h-act");
+  sel.replaceChildren(h("option", {value:""}, "Sin código de actividad"));
+  for (const a of ACTIVIDADES) if (a !== FLUJO) sel.append(h("option", {value:a}, a));
+})();
+$("form-hal").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const est = $("h-estado"), btn = $("h-enviar");
+  const f1 = $("h-foto").files[0], f2 = $("h-foto2").files[0];
+  if (!f1){ est.textContent = "Agrega una foto del hallazgo."; return; }
+  btn.disabled = true; est.textContent = "Enviando…";
+  try {
+    let foto, foto2 = null;
+    try { foto = await prepararFoto(f1); if (f2) foto2 = await prepararFoto(f2); }
+    catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
+    const n = await rpc("ot_hallazgo_crear", {p_token:S.token, p_titulo:$("h-titulo").value, p_detalle:$("h-desc").value, p_ubicacion:$("h-lugar").value,
+      p_actividad:$("h-act").value, p_realizado:$("h-hecho").value, p_foto:foto, p_foto2:foto2});
+    $("form-hal").reset();
+    est.textContent = "AH-" + String(n).padStart(4,"0") + " enviado. El administrador lo verá en Por revisar.";
+    await cargar();
+  } catch (e){ est.textContent = e.message; }
+  btn.disabled = false;
+});
 
 /* ---------- equipo ---------- */
 function claveAzar(){
@@ -952,6 +1001,7 @@ function renderReportes(){
   const hoy = hoyIso();
   if (!$("r-mes").value) $("r-mes").value = hoy.slice(0,7);
   const mes = $("r-mes").value || hoy.slice(0,7), caja = $("r-cuerpo"); caja.replaceChildren();
+  opcionesInforme(mes);
 
   // Alertas: lo que venció sin que el técnico lo realizara (no dependen del mes elegido).
   const alertas = [];
@@ -963,7 +1013,7 @@ function renderReportes(){
     } else if (excedida(o)){
       alertas.push([isoLocal(o.aceptada), o.trabajador + " lleva " + duracionTxt(horasEjec(o)) + " con " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + ") en ejecución. El máximo es " + MAX_EJEC_H + " horas."]);
     }
-    if (o.tipo !== "incidencia" && o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
+    if (esOT(o) && o.fecha_limite && o.fecha_limite < hoy && !hecha(o)){
       alertas.push([o.fecha_limite, o.trabajador + " no realizó " + numTxt(o.numero) + " (" + (o.actividad || o.titulo) + "), programada para el " + diaTxt(o.fecha_limite).toLowerCase() +
         (o.estado === "devuelta" ? ". Está devuelta para corregir." : ".")]);
     }
@@ -972,11 +1022,12 @@ function renderReportes(){
   $("nav-panel").textContent = "Panel" + (alertas.length ? " (" + alertas.length + ")" : "");
 
   // Datos del mes elegido.
-  const ots = S.ordenes.filter(o => o.tipo !== "incidencia" && diaRef(o).slice(0,7) === mes);
+  const ots = S.ordenes.filter(o => esOT(o) && diaRef(o).slice(0,7) === mes);
+  const hals = S.ordenes.filter(o => esHal(o) && isoLocal(o.creada).slice(0,7) === mes);
   const porGenerar = S.plan.filter(p => p.fecha.slice(0,7) === mes);
   const hechas = ots.filter(hecha);
   const prev = preventivos(), prevMes = prev.filter(p => p.fecha.slice(0,7) === mes), prevHechos = prevMes.filter(p => p.hecha).length;
-  const abiertas = S.ordenes.filter(o => o.tipo !== "incidencia" && !hecha(o));
+  const abiertas = S.ordenes.filter(o => esOT(o) && !hecha(o));
   const incs = S.ordenes.filter(o => o.tipo === "incidencia" && isoLocal(o.creada).slice(0,7) === mes), incHechas = incs.filter(hecha);
   const horasOt = lista => prom(lista.filter(o => o.enviado).map(o => horasEntre(o.creada, o.enviado)));
   // Tiempos por etapa: solo cuentan las OT que el técnico aceptó con el botón (las anteriores no tienen esa hora).
@@ -993,6 +1044,7 @@ function renderReportes(){
     tile("Horas promedio abiertas", horasTxt(horasOt(hechas)), "desde que se asigna hasta el reporte"),
     tile("OT abiertas ahora", String(abiertas.length), abiertas.length ? "antigüedad promedio " + horasTxt(prom(abiertas.map(o => horasEntre(o.creada, Date.now())))) : "nada pendiente"),
     tile("Incidencias atendidas", incHechas.length + " de " + incs.length, incHechas.length ? "cierre promedio en " + horasTxt(prom(incHechas.map(o => horasEntre(o.creada, o.cerrada)))) : "sin cierres en el mes"),
+    tile("Autohallazgos", String(hals.length), hals.length ? hals.filter(o => o.estado !== "cerrada").length + " por revisar" : "ninguno en el mes"),
     tile("Alertas", String(alertas.length), alertas.length ? "revísalas más abajo" : "sin trabajos vencidos")));
 
   caja.append(h("h3", null, "Tiempos de las OT, " + mesTxt(mes).toLowerCase()));
@@ -1017,7 +1069,7 @@ function renderReportes(){
   const diasMes = new Date(Number(mes.slice(0,4)), Number(mes.slice(5,7)), 0).getDate();
   const porDia = Array.from({length:diasMes}, (_, i) => {
     const dia = mes + "-" + String(i + 1).padStart(2,"0");
-    return {rotulo:String(i + 1), titulo:diaTxt(dia), valores:[S.ordenes.filter(o => hecha(o) && fechaHecha(o) === dia).length]};
+    return {rotulo:String(i + 1), titulo:diaTxt(dia), valores:[S.ordenes.filter(o => !esHal(o) && hecha(o) && fechaHecha(o) === dia).length]};
   });
   caja.append(h("h3", null, "Trabajos realizados por día, " + mesTxt(mes).toLowerCase()));
   caja.append(graficoColumnas(porDia, [{nombre:"trabajos realizados", clase:"s-real"}], 5));
@@ -1042,7 +1094,7 @@ function renderReportes(){
     return {t, asignadas:mias.length + porGenerar.filter(p => p.tecnico === t).length, hechas:mh.length,
       aTiempo:conPlazo.length ? pct(conPlazo.filter(o => isoLocal(o.enviado) <= o.fecha_limite).length, conPlazo.length) : "—",
       horas:horasTxt(horasOt(mh)), acepta:horasTxt(tAceptar(mias)), ejecuta:horasTxt(tEjecutar(mias)), devueltas:mias.filter(o => o.nota_devolucion).length,
-      inc:mIncH.length + " de " + mInc.length, horasInc:horasTxt(prom(mIncH.map(o => horasEntre(o.creada, o.cerrada))))};
+      hal:hals.filter(o => o.trabajador === t).length, inc:mIncH.length + " de " + mInc.length, horasInc:horasTxt(prom(mIncH.map(o => horasEntre(o.creada, o.cerrada))))};
   });
   caja.append(h("h3", null, "Rendimiento por técnico, " + mesTxt(mes).toLowerCase()));
   if (!rend.length) caja.append(h("p", {class:"nota"}, "Todavía no hay técnicos."));
@@ -1051,8 +1103,8 @@ function renderReportes(){
       h("span", {class:"med-n"}, r.t),
       h("div", {class:"meter", role:"img", "aria-label": r.t + ": " + r.hechas + " de " + r.asignadas + " OT realizadas"}, h("i", {style:"width:" + (r.asignadas ? Math.min(100, 100 * r.hechas / r.asignadas) : 0) + "%"})),
       h("span", {class:"med-v"}, r.asignadas ? r.hechas + " de " + r.asignadas + " (" + pct(r.hechas, r.asignadas) + ")" : "sin OT")))));
-    caja.append(tabla(["Técnico", "OT asignadas", "Realizadas", "Cumplimiento", "A tiempo", "Espera hasta aceptar", "Tiempo en ejecución", "Horas promedio abiertas", "Devueltas", "Incidencias atendidas", "Cierre promedio de incidencia"],
-      rend.map(r => [r.t, r.asignadas, r.hechas, pct(r.hechas, r.asignadas), r.aTiempo, r.acepta, r.ejecuta, r.horas, r.devueltas, r.inc, r.horasInc]), ""));
+    caja.append(tabla(["Técnico", "OT asignadas", "Realizadas", "Cumplimiento", "A tiempo", "Espera hasta aceptar", "Tiempo en ejecución", "Horas promedio abiertas", "Devueltas", "Incidencias atendidas", "Cierre promedio de incidencia", "Autohallazgos"],
+      rend.map(r => [r.t, r.asignadas, r.hechas, pct(r.hechas, r.asignadas), r.aTiempo, r.acepta, r.ejecuta, r.horas, r.devueltas, r.inc, r.horasInc, r.hal]), ""));
   }
 
   // Incidencias por centro de control en el mes.
@@ -1073,8 +1125,19 @@ function renderReportes(){
   caja.append(h("p", {class:"nota"}, "Un trabajo cuenta como realizado cuando el técnico envió su reporte, aunque todavía no lo hayas cerrado. Las horas abiertas van desde que la OT se asigna hasta ese reporte. Los tiempos por etapa solo cuentan las OT aceptadas con el botón Aceptar. Cada OT pertenece al mes de su fecha límite, o al de su creación si no tiene. El mes en curso incluye lo programado para los días que faltan."));
 }
 $("r-mes").addEventListener("change", () => { $("inf-enlaces").replaceChildren(); $("inf-estado").textContent = ""; renderReportes(); });
+$("inf-rango").addEventListener("change", () => { $("inf-enlaces").replaceChildren(); $("inf-estado").textContent = ""; });
 
-/* ---------- informe mensual con fotos ---------- */
+// Opciones del informe: el mes completo o cada semana (lunes a domingo) que toca el mes elegido.
+function ultimoDia(mes){ const [a, m] = mes.split("-").map(Number); return mes + "-" + String(new Date(Date.UTC(a, m, 0)).getUTCDate()).padStart(2, "0"); }
+function opcionesInforme(mes){
+  const sel = $("inf-rango"), antes = sel.value, fin = ultimoDia(mes);
+  sel.replaceChildren(h("option", {value:"mes"}, "Mes completo"));
+  for (let l = lunesDe(mes + "-01"); l <= fin; l = sumarIso(l, 7))
+    sel.append(h("option", {value:l}, "Semana " + semanaIso(l) + " (" + fechaCorta(l).slice(0,5) + " al " + fechaCorta(sumarIso(l, 6)).slice(0,5) + ")"));
+  sel.value = [...sel.options].some(o => o.value === antes) ? antes : "mes";
+}
+
+/* ---------- informe semanal o mensual con fotos ---------- */
 function esc(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function aDataUrl(blob){ return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(blob); }); }
 async function fotoDe(o, n){
@@ -1086,14 +1149,20 @@ async function fotoDe(o, n){
 let urlInforme = null;
 async function generarInforme(){
   const mes = $("r-mes").value || hoyIso().slice(0,7), est = $("inf-estado"), btn = $("inf-generar"), enl = $("inf-enlaces");
-  const trabajos = S.ordenes.filter(o => diaRef(o).slice(0,7) === mes || (hecha(o) && fechaHecha(o).slice(0,7) === mes))
-    .sort((a, b) => diaRef(a) < diaRef(b) ? -1 : diaRef(a) > diaRef(b) ? 1 : (a.numero - b.numero));
+  const rango = $("inf-rango").value || "mes", semanal = rango !== "mes";
+  const desde = semanal ? rango : mes + "-01", hasta = semanal ? sumarIso(rango, 6) : ultimoDia(mes);
+  const enRango = d => !!d && d >= desde && d <= hasta;
+  const periodo = semanal ? "Semana " + semanaIso(desde) + " · lunes " + fechaCorta(desde) + " al domingo " + fechaCorta(hasta) : mesTxt(mes);
+  const periodoTxt = semanal ? "la semana " + semanaIso(desde) + " (" + fechaCorta(desde) + " al " + fechaCorta(hasta) + ")" : mesTxt(mes).toLowerCase();
+  const porFecha = (a, b) => diaRef(a) < diaRef(b) ? -1 : diaRef(a) > diaRef(b) ? 1 : (a.numero - b.numero);
+  const trabajos = S.ordenes.filter(o => !esHal(o) && (enRango(diaRef(o)) || (hecha(o) && enRango(fechaHecha(o))))).sort(porFecha);
+  const hals = S.ordenes.filter(o => esHal(o) && enRango(isoLocal(o.creada))).sort(porFecha);
   enl.replaceChildren();
-  if (!trabajos.length){ est.textContent = "No hay trabajos en " + mesTxt(mes).toLowerCase() + "."; return; }
+  if (!trabajos.length && !hals.length){ est.textContent = "No hay trabajos ni autohallazgos en " + periodoTxt + "."; return; }
   btn.disabled = true;
   try {
     // Fotos: de a cuatro a la vez, mostrando el avance.
-    const conFoto = trabajos.flatMap(o => [o.tiene_foto ? [o, 1] : null, o.tiene_foto2 ? [o, 2] : null].filter(Boolean)), fotos = {};
+    const conFoto = trabajos.concat(hals).flatMap(o => [o.tiene_foto ? [o, 1] : null, o.tiene_foto2 ? [o, 2] : null].filter(Boolean)), fotos = {};
     let listas = 0, sig = 0;
     const obrero = async () => { while (sig < conFoto.length){ const [o, n] = conFoto[sig++]; fotos[o.id + "|" + n] = await fotoDe(o, n); listas++; est.textContent = "Cargando fotos: " + listas + " de " + conFoto.length + "…"; } };
     est.textContent = conFoto.length ? "Cargando fotos: 0 de " + conFoto.length + "…" : "Armando el informe…";
@@ -1102,8 +1171,8 @@ async function generarInforme(){
     try { logo = await aDataUrl(await (await fetch("logo.png")).blob()); } catch (e){}
 
     const ots = trabajos.filter(o => o.tipo !== "incidencia"), incs = trabajos.filter(o => o.tipo === "incidencia");
-    const tecnicos = [...new Set(trabajos.map(o => o.trabajador))].sort();
-    const numero = o => (o.tipo === "incidencia" ? "INC-" : "OT-") + String(o.numero || 0).padStart(4,"0");
+    const tecnicos = [...new Set(trabajos.concat(hals).map(o => o.trabajador))].sort();
+    const numero = codigo;
     const estadoTxt = o => hecha(o) ? (o.estado === "cerrada" ? "Cerrada" : "Realizada, por revisar") : o.estado === "ejecucion" ? "En ejecución" : (o.tipo === "incidencia" ? "Abierta" : "No realizada");
     const fila = (r, v) => v ? "<tr><th>" + esc(r) + "</th><td>" + esc(v) + "</td></tr>" : "";
     const bloques = trabajos.map(o => {
@@ -1118,32 +1187,43 @@ async function generarInforme(){
         "</table>" + (f ? '<img src="' + f + '" alt="Foto del trabajo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
         (f2 ? '<img src="' + f2 + '" alt="Segunda foto del trabajo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
     }).join("");
+    const bloquesHal = hals.map(o => {
+      const f = fotos[o.id + "|1"], f2 = fotos[o.id + "|2"];
+      return '<section class="trabajo hal"><h3>' + esc(numero(o)) + " · Autohallazgo" + ' <span class="est' + (o.estado === "cerrada" ? "" : " pend") + '">' + (o.estado === "cerrada" ? "Revisado" : "Por revisar") + "</span></h3><table>" +
+        fila("Técnico", o.trabajador) + fila("Informado el", fecha(o.creada)) + fila("Hallazgo", o.titulo) + fila("Ubicación", o.ubicacion) +
+        fila("Código de actividad", o.actividad) + fila("Descripción", o.detalle) + fila("Qué hizo el técnico", o.descripcion_realizada) +
+        fila("Revisado el", o.estado === "cerrada" && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de revisión", o.nota_cierre) + "</table>" +
+        (f ? '<img src="' + f + '" alt="Foto del autohallazgo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
+        (f2 ? '<img src="' + f2 + '" alt="Segunda foto del autohallazgo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
+    }).join("");
     const resumen = tecnicos.map(t => {
       const m = ots.filter(o => o.trabajador === t), mi = incs.filter(o => o.trabajador === t);
-      return "<tr><td>" + esc(t) + "</td><td>" + m.length + "</td><td>" + m.filter(hecha).length + "</td><td>" + esc(pct(m.filter(hecha).length, m.length)) + "</td><td>" + mi.filter(hecha).length + " de " + mi.length + "</td></tr>";
+      return "<tr><td>" + esc(t) + "</td><td>" + m.length + "</td><td>" + m.filter(hecha).length + "</td><td>" + esc(pct(m.filter(hecha).length, m.length)) + "</td><td>" + mi.filter(hecha).length + " de " + mi.length + "</td><td>" + hals.filter(o => o.trabajador === t).length + "</td></tr>";
     }).join("");
-    const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Informe de trabajos ' + esc(mesTxt(mes)) + "</title><style>" +
+    const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Informe ' + (semanal ? "semanal" : "mensual") + " de trabajos · " + esc(periodo) + "</title><style>" +
       "body{font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#002d57;margin:0;background:#fff}main{max-width:820px;margin:0 auto;padding:24px 20px 60px}" +
       "header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:4px solid #01add3;padding-bottom:12px}header img{height:64px}h1{font-size:22px;margin:0}h2{font-size:17px;margin:26px 0 8px}" +
       "h3{font-size:15px;margin:0 0 8px}table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;padding:4px 10px 4px 0;border-top:1px solid #cfdde6}" +
       ".trabajo{border:1px solid #cfdde6;border-left:5px solid #01add3;border-radius:6px;padding:12px 14px;margin:14px 0;break-inside:avoid}.trabajo th{width:170px;font-weight:600;color:#4f6478}.trabajo td{white-space:pre-wrap;overflow-wrap:anywhere}" +
-      ".trabajo img{display:block;max-width:100%;max-height:420px;margin-top:10px;border:1px solid #cfdde6;border-radius:4px}.est{font-size:12px;font-weight:600;border:1px solid #1f7a4d;color:#1f7a4d;border-radius:99px;padding:1px 9px;margin-left:6px;white-space:nowrap}.est.no{border-color:#b3261e;color:#b3261e}" +
+      ".trabajo img{display:block;max-width:100%;max-height:420px;margin-top:10px;border:1px solid #cfdde6;border-radius:4px}.est{font-size:12px;font-weight:600;border:1px solid #1f7a4d;color:#1f7a4d;border-radius:99px;padding:1px 9px;margin-left:6px;white-space:nowrap}.est.no{border-color:#b3261e;color:#b3261e}.est.pend{border-color:#9a6700;color:#9a6700}.trabajo.hal{border-left-color:#7a4fb3}" +
       ".sin,.pie{color:#4f6478}.barra{margin:14px 0}.barra button{font:600 14px system-ui,sans-serif;padding:9px 16px;border-radius:4px;border:1px solid #002d57;background:#002d57;color:#fff;cursor:pointer}" +
       "@media print{.barra{display:none}main{padding:0}.trabajo{border-color:#999}}</style></head><body><main>" +
-      "<header><div><h1>Informe de trabajos</h1><p>" + esc(mesTxt(mes)) + " · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
+      "<header><div><h1>Informe " + (semanal ? "semanal" : "mensual") + " de trabajos</h1><p>" + esc(periodo) + " · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
       '<div class="barra"><button type="button" onclick="window.print()">Imprimir o guardar como PDF</button></div>' +
-      "<h2>Resumen</h2><table><tr><th>OT del mes</th><td>" + ots.length + "</td></tr><tr><th>OT realizadas</th><td>" + ots.filter(hecha).length + " (" + esc(pct(ots.filter(hecha).length, ots.length)) + ")</td></tr>" +
+      "<h2>Resumen</h2><table><tr><th>OT " + (semanal ? "de la semana" : "del mes") + "</th><td>" + ots.length + "</td></tr><tr><th>OT realizadas</th><td>" + ots.filter(hecha).length + " (" + esc(pct(ots.filter(hecha).length, ots.length)) + ")</td></tr>" +
       "<tr><th>Preventivas realizadas</th><td>" + ots.filter(o => o.origen === "plan" && hecha(o)).length + " de " + ots.filter(o => o.origen === "plan").length + "</td></tr>" +
-      "<tr><th>Incidencias atendidas</th><td>" + incs.filter(hecha).length + " de " + incs.length + "</td></tr></table>" +
-      "<h2>Por técnico</h2><table><tr><th>Técnico</th><th>OT asignadas</th><th>Realizadas</th><th>Cumplimiento</th><th>Incidencias atendidas</th></tr>" + resumen + "</table>" +
-      "<h2>Detalle de los trabajos</h2>" + bloques +
-      '<p class="pie">Informe generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". Incluye las OT e incidencias programadas o realizadas en " + esc(mesTxt(mes).toLowerCase()) + ".</p></main></body></html>";
+      "<tr><th>Incidencias atendidas</th><td>" + incs.filter(hecha).length + " de " + incs.length + "</td></tr>" +
+      "<tr><th>Autohallazgos informados</th><td>" + hals.length + (hals.length ? " (" + hals.filter(o => o.estado === "cerrada").length + " revisados)" : "") + "</td></tr></table>" +
+      "<h2>Por técnico</h2><table><tr><th>Técnico</th><th>OT asignadas</th><th>Realizadas</th><th>Cumplimiento</th><th>Incidencias atendidas</th><th>Autohallazgos</th></tr>" + resumen + "</table>" +
+      "<h2>Detalle de los trabajos</h2>" + (bloques || '<p class="sin">No hubo OT ni incidencias en el período.</p>') +
+      "<h2>Autohallazgos</h2>" + (bloquesHal || '<p class="sin">No hubo autohallazgos en el período.</p>') +
+      '<p class="pie">Informe generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". Incluye las OT e incidencias programadas o realizadas en " + esc(periodoTxt) + " y los autohallazgos informados en ese período.</p></main></body></html>";
     if (urlInforme) URL.revokeObjectURL(urlInforme);
     urlInforme = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
     const sinFoto = conFoto.filter(([o, n]) => !fotos[o.id + "|" + n]).length;
-    est.textContent = "Informe listo: " + trabajos.length + " trabajos, " + (conFoto.length - sinFoto) + " fotos." + (sinFoto ? " " + sinFoto + " fotos no se pudieron cargar." : "");
+    est.textContent = "Informe listo: " + trabajos.length + " trabajos, " + hals.length + " autohallazgos, " + (conFoto.length - sinFoto) + " fotos." + (sinFoto ? " " + sinFoto + " fotos no se pudieron cargar." : "");
     enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener"}, "Abrir informe"),
-      h("a", {class:"btn", href:urlInforme, download:"Informe_trabajos_" + mes + ".html"}, "Descargar archivo"));
+      h("a", {class:"btn", href:urlInforme, download:(semanal ? "Informe_semana_" + semanaIso(desde) + "_" + desde : "Informe_mensual_" + mes) + ".html"}, "Descargar archivo"));
   } catch (e){ est.textContent = "No se pudo armar el informe. " + (e && e.message ? e.message : ""); }
   btn.disabled = false;
 }
