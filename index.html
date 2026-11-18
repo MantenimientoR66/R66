@@ -85,7 +85,7 @@ button.btn:disabled{opacity:.55;cursor:default}
 .ot.e-revision{border-left-color:var(--aviso)}
 .ot.e-cerrada{border-left-color:var(--ok)}
 .ot.alerta{border-color:var(--alerta);border-left-color:var(--alerta);background:color-mix(in srgb, var(--alerta) 9%, var(--panel))}
-#alerta-inc{font-weight:600;color:var(--alerta);background:color-mix(in srgb, var(--alerta) 9%, var(--panel))}
+#alerta-inc{white-space:pre-line;font-weight:600;color:var(--alerta);background:color-mix(in srgb, var(--alerta) 9%, var(--panel))}
 .ot-cab{width:100%;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:12px 14px;display:flex;flex-direction:column;gap:4px}
 .ot-linea{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .num{font:700 1rem/1 var(--display);letter-spacing:.02em;color:var(--info);font-variant-numeric:tabular-nums}
@@ -160,6 +160,9 @@ table.rep td{border-top:1px solid var(--linea);padding:6px 10px 6px 0;vertical-a
 table.rep th.num-cel,table.rep td.num-cel{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 table.plan td:first-child{white-space:nowrap;font-weight:600}
 table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+.cola{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:6px}
+.cola li{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between;border-top:1px solid var(--linea);padding-top:6px}
+.cola-t{overflow-wrap:anywhere;min-width:0;flex:1 1 220px}
 </style>
 </head>
 <body>
@@ -235,6 +238,16 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       <button type="button" data-v="ajustes" aria-pressed="false">Ajustes</button>
     </nav>
     <div class="mensaje" id="alerta-inc" role="alert" hidden></div>
+    <section class="panel" id="cola" hidden>
+      <details open>
+        <summary>Cola de trabajo por técnico</summary>
+        <div class="lista">
+          <p class="nota">Cada técnico hace sus OT de a una: solo puede aceptar la primera de su cola y solo cuando envió el reporte de la anterior. Tiene 4 horas como máximo desde que la acepta; pasado ese tiempo la OT aparece en rojo. Usa las flechas para cambiar el orden.</p>
+          <div class="lista" id="cola-lista"></div>
+          <p class="nota" id="cola-estado" role="status"></p>
+        </div>
+      </details>
+    </section>
     <section class="filtros" id="filtros" aria-label="Filtrar por estado"></section>
 
     <section class="panel" id="nueva" hidden>
@@ -482,9 +495,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=16"></script>
-<script src="calendario.js?v=16"></script>
-<script src="app.js?v=16"></script>
+<script src="config.js?v=17"></script>
+<script src="calendario.js?v=17"></script>
+<script src="app.js?v=17"></script>
 <script src="bitacoras.js"></script>
 </body>
 </html>
