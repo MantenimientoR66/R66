@@ -104,7 +104,7 @@ async function rpc(fn, args){
 /* ---------- acceso ---------- */
 function cerrarLocal(msg){
   guardarToken(null); S.yo = null; S.ordenes = []; S.trabajadores = []; S.plan = []; S.huella = ""; S.huellaEquipo = ""; S.huellaPlan = ""; S.huellaRep = null; S.huellaInc = ""; S.huellaFer = ""; S.importar = null;
-  S.fotos = {}; S.borradores = {}; S.temporal = "";
+  S.fotos = {}; S.borradores = {}; S.temporal = ""; S.busqueda = ""; S.indiceBusq = {}; $("buscar").value = "";
   $("rol").textContent = "";
   vista("v-login");
   if (msg) $("l-estado").textContent = msg;
@@ -129,7 +129,7 @@ function abrirApp(){
   $("hallazgo").hidden = S.admin || S.control;
   $("horas").hidden = S.control; $("he-trab-caja").hidden = !S.admin; $("he-excel").hidden = !S.admin;
   S.horas = null; S.hePeriodo = ""; prepararHoras();
-  for (const id of ["filtros","lista","cuenta"]) $(id).hidden = false;
+  for (const id of ["buscador","filtros","lista","cuenta"]) $(id).hidden = false;
   if (S.admin) mostrarVista(S.vista || "ordenes");
   aviso("");
   vista("v-app"); render(); cargar();
@@ -225,6 +225,41 @@ function hoyIso(){
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
 }
 function numTxt(n){ return "OT-" + String(n||0).padStart(4,"0"); }
+/* ---------- buscador ---------- */
+// Busca por palabras en todo el historial: código (OT-0024, INC-0003, AH-0001), título, detalle, actividad,
+// ubicación, técnico, quién la creó, lo que informó el técnico, notas y fechas. Todas las palabras deben aparecer.
+function normTxt(t){ return String(t == null ? "" : t).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+function textoBusqueda(o){
+  const k = o.id + "|" + (o.enviado || "") + "|" + o.estado + "|" + (o.cerrada || "") + "|" + o.trabajador_id;
+  S.indiceBusq = S.indiceBusq || {};
+  const c = S.indiceBusq[o.id];
+  if (c && c.k === k) return c.t;
+  const t = normTxt([codigo(o), o.titulo, o.detalle, o.actividad, o.codigo_actividad, o.ubicacion, o.trabajador, o.creada_por,
+    o.descripcion_realizada, o.nota_cierre, o.nota_devolucion, ESTADOS[o.estado], o.prioridad,
+    o.tipo === "incidencia" ? "incidencia" : esHal(o) ? "autohallazgo hallazgo" : "orden de trabajo",
+    o.origen === "plan" ? "preventivo plan" : o.origen === "ronda" ? "ronda" : o.origen === "flujometro" ? "lectura diaria" : "",
+    esFlujo(o) ? MEDIDORES[medidorDe(o)] : "", o.metros_cubicos != null ? String(o.metros_cubicos).replace(".", ",") : "",
+    o.creada ? fechaCorta(isoLocal(o.creada)) : "", o.fecha_limite ? fechaCorta(o.fecha_limite) : "",
+    o.enviado ? fechaCorta(isoLocal(o.enviado)) : "", o.cerrada ? fechaCorta(isoLocal(o.cerrada)) : ""].join(" \n "));
+  S.indiceBusq[o.id] = {k, t};
+  return t;
+}
+function coincideBusqueda(o, palabras){
+  const t = textoBusqueda(o);
+  return palabras.every(w => {
+    const m = /^(ot|inc|ah)-?0*(\d+)$/.exec(w);      // "ot-24", "OT0024" o "inc-3" buscan ese código exacto
+    if (m) return codigo(o).toLowerCase() === m[1] + "-" + m[2].padStart(4, "0");
+    return t.includes(w);
+  });
+}
+function palabrasBusqueda(){ return normTxt(S.busqueda || "").split(/\s+/).filter(Boolean); }
+$("buscar").addEventListener("input", ev => {
+  const antes = !!(S.busqueda || "").trim();
+  S.busqueda = ev.target.value;
+  if (!antes && S.busqueda.trim()) S.filtro = "todas";   // al empezar a buscar, mira todo el historial
+  render();
+});
+
 function enFiltro(o){
   const e = o.estado;
   if (S.filtro === "todas") return true;
@@ -293,7 +328,7 @@ function render(){
   ultimaFirma = firmaAlertas();
   const enCola = (a, b) => a.estado === "asignada" && b.estado === "asignada"
     ? ((a.tipo === "incidencia" ? 0 : 1) - (b.tipo === "incidencia" ? 0 : 1)) || (esOT(a) && esOT(b) ? porCola(a, b) : 0) : 0;
-  const items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (excedida(b) - excedida(a)) || (peso[a.estado]-peso[b.estado]) || enCola(a, b) || (new Date(b.creada) - new Date(a.creada)));
+  let items = S.ordenes.slice().sort((a,b) => (jefe ? nivelInc(b) - nivelInc(a) : 0) || (excedida(b) - excedida(a)) || (peso[a.estado]-peso[b.estado]) || enCola(a, b) || (new Date(b.creada) - new Date(a.creada)));
   const enAlerta = jefe ? items.filter(o => nivelInc(o) > 0) : [];
   const otAlerta = items.filter(excedida);
   const ban = $("alerta-inc"), lineas = [];
@@ -311,6 +346,10 @@ function render(){
   ban.hidden = !lineas.length;
   ban.textContent = lineas.join("\n");
   renderCola();
+  const palabras = palabrasBusqueda(), todos = items;
+  if (palabras.length) items = items.filter(o => coincideBusqueda(o, palabras));
+  const info = $("buscar-info");
+  info.textContent = palabras.length ? (items.length ? (items.length === 1 ? "1 trabajo encontrado" : items.length + " trabajos encontrados") + " de " + todos.length + "." : "Ningún trabajo coincide con la búsqueda.") : "";
   const cuenta = {todas:items.length, pendientes:0, ejecucion:0, revision:0, cerrada:0, hallazgos:items.filter(esHal).length};
   for (const o of items){
     if (o.estado === "asignada") cuenta.pendientes++; else if (o.estado === "devuelta") cuenta.ejecucion++; else cuenta[o.estado]++;
@@ -326,7 +365,8 @@ function render(){
   const vis = items.filter(enFiltro);
   if (!vis.length){
     lista.append(h("p", {class:"nota"},
-      items.length ? "No hay órdenes en este estado."
+      palabras.length ? (items.length ? "Ningún resultado de la búsqueda está en este estado. Elige Todas." : "No hay trabajos que coincidan con «" + S.busqueda.trim() + "». Prueba con otra palabra.")
+      : items.length ? "No hay órdenes en este estado."
       : S.control ? "No hay incidencias registradas."
       : S.admin ? "Todavía no has asignado órdenes de trabajo."
       : "No tienes órdenes de trabajo asignadas por ahora."));
@@ -1574,7 +1614,7 @@ $("he-excel").addEventListener("click", () => {
 });
 
 /* ---------- menú del administrador ---------- */
-const VISTAS = {ordenes:["cola","filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], horas:["horas"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
+const VISTAS = {ordenes:["cola","buscador","filtros","nueva","lista"], panel:["reportes"], flujo:["flujo"], horas:["horas"], plan:["plan"], equipo:["equipo"], ajustes:["feriados","cuenta"]};
 function mostrarVista(v){
   S.vista = VISTAS[v] ? v : "ordenes";
   for (const k in VISTAS) for (const id of VISTAS[k]){
