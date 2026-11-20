@@ -193,7 +193,8 @@ async function cargar(){
     const hu = JSON.stringify(d.ordenes), he = JSON.stringify([d.trabajadores, d.turnos || [], d.turnos_calendario || null]);
     S.turnos = d.turnos || [];
     S.turnosCal = d.turnos_calendario || null;       // null = la base de datos aún no tiene los turnos manuales
-    const hp = JSON.stringify(d.plan || []);
+    const hp = JSON.stringify(d.plan || []), hm = JSON.stringify(d.flujo_manual || []);
+    S.flujoManual = d.flujo_manual || [];
     S.ordenes = d.ordenes; S.trabajadores = d.trabajadores; S.plan = d.plan || [];
     if (he !== S.huellaEquipo){ S.huellaEquipo = he; renderEquipo(); }
     if (hp !== S.huellaPlan){ S.huellaPlan = hp; renderPlan(); }
@@ -202,9 +203,9 @@ async function cargar(){
     S.fuera = !!d.fuera_horario; S.sinHorario = !!d.sin_horario;
     const hi = he + "|" + S.fuera + "|" + S.sinHorario;
     if (S.control && hi !== S.huellaInc){ S.huellaInc = hi; renderIncidencia(); }
-    const cambioRep = hu !== S.huella || hp !== S.huellaRep;
+    const cambioRep = hu !== S.huella || hp + hm !== S.huellaRep;
     if (hu !== S.huella){ S.huella = hu; render(); }
-    if (cambioRep){ S.huellaRep = hp; renderReportes(); renderFlujo(); }
+    if (cambioRep){ S.huellaRep = hp + hm; renderReportes(); renderFlujo(); }
     if ($("aviso").textContent.startsWith("No hay conexión")) aviso("");
   } catch (e){ if (S.token && !$("v-app").hidden) aviso(e.message); }
   cargando = false;
@@ -1259,12 +1260,15 @@ $("inf-generar").addEventListener("click", generarInforme);
 /* ---------- reporte de flujómetro ---------- */
 // El técnico anota lo que marca el medidor (acumulado). El consumo de un día es su lectura menos la lectura anterior.
 // Una lectura por día: la última enviada de ese día. El día es la fecha límite de la OT (o el día en que se creó).
+// Las lecturas cargadas a mano (días anteriores al sistema) cuentan igual; si un día también tiene la de una OT, vale la de la OT.
 function lecturasFlujo(med){
   const porDia = {};
+  for (const m of S.flujoManual || [])
+    if (Number(m.medidor) === med) porDia[m.fecha] = {dia:m.fecha, m3:Number(m.m3), tecnico:"Carga manual", enviado:m.cargada, manual:true};
   for (const o of S.ordenes){
     if (!esFlujo(o) || medidorDe(o) !== med || o.metros_cubicos == null || !o.enviado) continue;
     const dia = diaRef(o), ant = porDia[dia];
-    if (!ant || new Date(o.enviado) > new Date(ant.enviado)) porDia[dia] = {dia, m3:Number(o.metros_cubicos), tecnico:o.trabajador, enviado:o.enviado, numero:o.numero};
+    if (!ant || ant.manual || new Date(o.enviado) > new Date(ant.enviado)) porDia[dia] = {dia, m3:Number(o.metros_cubicos), tecnico:o.trabajador, enviado:o.enviado, numero:o.numero};
   }
   const lect = Object.values(porDia).sort((a, b) => a.dia < b.dia ? -1 : 1);
   lect.forEach((l, i) => {
@@ -1311,9 +1315,10 @@ function consumoTxt(l){ return l.consumo == null ? "—" : m3Txt(l.consumo) + (l
 function filasFlujo(del){
   return del.slice().reverse().map(l => [diaTxt(l.dia), l.tecnico, m3Txt(l.m3), consumoTxt(l), fecha(l.enviado)]);
 }
-const CAB_FLUJO = ["Día", "Técnico", "Lectura del medidor (m³)", "Consumo: lectura menos la anterior (m³)", "Informada el"];
+const CAB_FLUJO = ["Día", "Técnico", "Lectura del medidor (m³)", "Consumo: lectura menos la anterior (m³)", "Informada o cargada el"];
 function renderFlujo(){
   if (!S.admin) return;
+  renderFlujoManual();
   const caja = $("fl-cuerpo"); caja.replaceChildren();
   const {periodos, error} = periodosFlujo();
   if (error){ caja.append(h("p", {class:"mensaje"}, error)); return; }
@@ -1336,7 +1341,86 @@ function renderFlujo(){
 }
 function cambioFlujo(){ $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); }
 $("fl-desde").addEventListener("change", cambioFlujo);
-$("fl-medidor").addEventListener("change", cambioFlujo);
+$("fl-medidor").addEventListener("change", () => { $("fm-medidor").value = $("fl-medidor").value; $("fm-estado").textContent = ""; cambioFlujo(); });
+
+/* ---------- lecturas anteriores cargadas a mano ---------- */
+// Acepta "01-10-2026", "1/10/26", "01.10.2026" y "2026-10-01".
+function leerFechaTxt(t){
+  t = String(t || "").trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t), a, me, d;
+  if (m){ a = +m[1]; me = +m[2]; d = +m[3]; }
+  else if ((m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2}|\d{4})$/.exec(t))){ d = +m[1]; me = +m[2]; a = +m[3] < 100 ? 2000 + +m[3] : +m[3]; }
+  else return null;
+  const f = new Date(Date.UTC(a, me - 1, d));
+  if (f.getUTCFullYear() !== a || f.getUTCMonth() !== me - 1 || f.getUTCDate() !== d) return null;
+  return f.toISOString().slice(0, 10);
+}
+// Cada línea: fecha y lectura, separadas por tabulación (copiado de Excel), punto y coma o espacio.
+function leerLineasFlujo(texto){
+  const filas = [], errores = [], hoy = hoyIso(), vistos = {};
+  String(texto || "").split(/\r?\n/).forEach((linea, i) => {
+    const t = linea.trim();
+    if (!t) return;
+    const partes = t.split(/[\t;]+|\s+/).filter(Boolean);
+    const fecha = leerFechaTxt(partes[0]), m3 = leerM3(partes.slice(1).join(""));
+    if (!fecha) return errores.push("Línea " + (i + 1) + ": no reconozco la fecha \"" + (partes[0] || "") + "\".");
+    if (fecha > hoy) return errores.push("Línea " + (i + 1) + ": la fecha " + fechaCorta(fecha) + " es futura.");
+    if (m3 == null) return errores.push("Línea " + (i + 1) + ": falta la lectura en m³ o no es un número.");
+    if (vistos[fecha]) return errores.push("Línea " + (i + 1) + ": el " + fechaCorta(fecha) + " está repetido.");
+    vistos[fecha] = true; filas.push({fecha, m3});
+  });
+  return {filas, errores};
+}
+async function guardarFlujoManual(filas){
+  const est = $("fm-estado"), med = Number($("fm-medidor").value) === 2 ? 2 : 1;
+  $("fm-guardar").disabled = $("fm-agregar").disabled = true; est.textContent = "Guardando…";
+  try {
+    const n = await rpc("ot_flujo_manual_guardar", {p_token:S.token, p_medidor:med, p_filas:filas});
+    est.textContent = n + (n === 1 ? " lectura guardada" : " lecturas guardadas") + " en el " + MEDIDORES[med].charAt(0).toLowerCase() + MEDIDORES[med].slice(1) + ".";
+    $("fl-medidor").value = String(med);
+    await cargar(); renderFlujo();
+    return true;
+  } catch (e){ est.textContent = e.message; return false; }
+  finally { $("fm-guardar").disabled = $("fm-agregar").disabled = false; }
+}
+$("fm-agregar").addEventListener("click", async () => {
+  const fecha = $("fm-fecha").value, m3 = leerM3($("fm-m3").value), est = $("fm-estado");
+  if (!fecha){ est.textContent = "Elige la fecha de la lectura."; return; }
+  if (fecha > hoyIso()){ est.textContent = "La fecha no puede ser futura."; return; }
+  if (m3 == null){ est.textContent = "Escribe la lectura en m³ solo con números, por ejemplo 1250,5."; return; }
+  if (await guardarFlujoManual([{fecha, m3}])){ $("fm-m3").value = ""; $("fm-fecha").value = sumarIso(fecha, 1) <= hoyIso() ? sumarIso(fecha, 1) : ""; }
+});
+$("fm-guardar").addEventListener("click", async () => {
+  const {filas, errores} = leerLineasFlujo($("fm-texto").value), est = $("fm-estado");
+  if (errores.length){ est.textContent = "Corrige y vuelve a guardar. " + errores.slice(0, 5).join(" ") + (errores.length > 5 ? " Y " + (errores.length - 5) + " más." : ""); return; }
+  if (!filas.length){ est.textContent = "Pega al menos una línea con fecha y lectura."; return; }
+  if (await guardarFlujoManual(filas)) $("fm-texto").value = "";
+});
+$("fm-medidor").addEventListener("change", () => { $("fl-medidor").value = $("fm-medidor").value; $("fm-estado").textContent = ""; cambioFlujo(); });
+function renderFlujoManual(){
+  const med = Number($("fl-medidor").value) === 2 ? 2 : 1, caja = $("fm-lista");
+  $("fm-medidor").value = String(med);
+  if (!$("fm-fecha").max) $("fm-fecha").max = hoyIso();
+  const lista = (S.flujoManual || []).filter(m => Number(m.medidor) === med).sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+  $("fm-titulo").textContent = "Cargar lecturas anteriores" + (lista.length ? " (" + lista.length + " cargadas en el " + MEDIDORES[med].split(" (")[0].toLowerCase() + ")" : "");
+  caja.replaceChildren();
+  if (!lista.length){ caja.append(h("p", {class:"nota"}, "Todavía no hay lecturas cargadas a mano en el " + MEDIDORES[med].charAt(0).toLowerCase() + MEDIDORES[med].slice(1) + ".")); return; }
+  const cuerpo = h("tbody");
+  for (const m of lista){
+    const k = "fm|" + med + "|" + m.fecha, oc = !!S.ocupado[k];
+    cuerpo.append(h("tr", null, h("td", null, diaTxt(m.fecha)), h("td", {class:"num-cel"}, m3Txt(Number(m.m3))),
+      h("td", {class:"num-cel"}, fecha(m.cargada)),
+      h("td", {class:"num-cel"}, h("button", {class:"btn chico peligro", type:"button", disabled:oc, "aria-label":"Eliminar la lectura del " + fechaCorta(m.fecha),
+        onclick: async () => {
+          S.ocupado[k] = true; renderFlujoManual();
+          try { await rpc("ot_flujo_manual_eliminar", {p_token:S.token, p_medidor:med, p_fecha:m.fecha}); $("fm-estado").textContent = "Lectura del " + fechaCorta(m.fecha) + " eliminada."; }
+          catch (e){ $("fm-estado").textContent = e.message; }
+          delete S.ocupado[k]; await cargar(); renderFlujo();
+        }}, oc ? "Eliminando…" : "Eliminar"))));
+  }
+  caja.append(h("div", {class:"tabla-caja", style:"max-height:320px;overflow:auto"}, h("table", {class:"rep"},
+    h("thead", null, h("tr", null, ["Día", "Lectura (m³)", "Cargada el", ""].map((c, i) => h("th", {class: i ? "num-cel" : null, scope:"col"}, c)))), cuerpo)));
+}
 $("fl-hasta").addEventListener("change", cambioFlujo);
 // Atajos: llenan Desde y Hasta.
 for (const [id, f] of [["fl-semana", () => { const l = lunesDe(hoyIso()); return [l, sumarIso(l, 6)]; }],
