@@ -159,6 +159,26 @@ insert into public.ajustes(clave, valor)
   values ('flujo_desde', to_char(now() at time zone 'America/Santiago', 'YYYY-MM-DD HH24:MI:SS'))
   on conflict (clave) do nothing;
 
+-- Hay dos flujómetros: 1 = planta de tratamiento, 2 = sala de servidores. Cada OT de Flujómetro dice a cuál corresponde
+-- y cada día se genera una lectura por medidor, para el mismo técnico de turno.
+alter table public.ordenes add column if not exists medidor smallint; -- solo en las OT de Flujómetro
+update public.ordenes set medidor = 1 where actividad = 'Flujómetro' and medidor is null;
+alter table public.flujometros add column if not exists medidor smallint not null default 1;
+do $$
+begin
+  if not exists (select 1 from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+                  where c.conrelid = 'public.flujometros'::regclass and c.contype = 'p' and a.attname = 'medidor') then
+    alter table public.flujometros drop constraint if exists flujometros_pkey;
+    alter table public.flujometros add primary key (fecha, medidor);
+  end if;
+end $$;
+-- El flujómetro 2 parte el día en que se instala (incluye la lectura de ese mismo día).
+insert into public.ajustes(clave, valor)
+  values ('flujo2_desde', to_char(date_trunc('day', now() at time zone 'America/Santiago'), 'YYYY-MM-DD HH24:MI:SS'))
+  on conflict (clave) do nothing;
+create or replace function public.ot_medidor_nombre(m int) returns text
+language sql immutable as $$ select case m when 2 then 'Flujómetro 2 (sala de servidores)' else 'Flujómetro 1 (planta de tratamiento)' end $$;
+
 -- Horas extras. 'turno' = las que recibe sola la persona de turno de emergencia; 'manual' = las que agrega el técnico.
 create table if not exists public.horas_extras (
   id uuid primary key default gen_random_uuid(),
@@ -614,32 +634,39 @@ end $$;
 
 -- ---------- flujómetro ----------
 
--- Crea cada día a las 8:30 (hora de Chile; también fines de semana y feriados) la OT "Flujómetro"
--- para el técnico que está de turno de emergencia a esa hora.
+-- Crea cada día a las 8:30 (hora de Chile; también fines de semana y feriados) una OT "Flujómetro" por cada medidor
+-- para el técnico que está de turno de emergencia a esa hora. Se crea primero la del 2, para que la del 1 quede primera en la cola.
 create or replace function public.ot_generar_flujometros() returns int
 language plpgsql security definer set search_path = public, extensions as $$
-declare ahora timestamp := now() at time zone 'America/Santiago'; desde timestamp; d date; momento timestamp;
-  tec uuid; oid uuid; c int; n int := 0;
+declare ahora timestamp := now() at time zone 'America/Santiago'; desde1 timestamp; desde2 timestamp; desde timestamp;
+  d date; m int; momento timestamp; tec uuid; oid uuid; c int; n int := 0;
 begin
-  select valor::timestamp into desde from public.ajustes where clave = 'flujo_desde';
-  if desde is null then return 0; end if;
-  for d in select g::date from generate_series(greatest(desde::date, ahora::date - 7)::timestamp, ahora::date::timestamp, interval '1 day') g loop
+  select valor::timestamp into desde1 from public.ajustes where clave = 'flujo_desde';
+  select valor::timestamp into desde2 from public.ajustes where clave = 'flujo2_desde';
+  if desde1 is null and desde2 is null then return 0; end if;
+  for d in select g::date from generate_series(greatest(least(coalesce(desde1, desde2), coalesce(desde2, desde1))::date, ahora::date - 7)::timestamp,
+                                               ahora::date::timestamp, interval '1 day') g loop
     momento := d + time '08:30';
-    continue when momento > ahora or momento < desde;
-    continue when exists (select 1 from public.flujometros where fecha = d);
+    continue when momento > ahora;
     tec := public.ot_turno_de(public.ot_turno_inicio(momento));
     continue when tec is null;
-    insert into public.flujometros(fecha) values (d) on conflict (fecha) do nothing;
-    get diagnostics c = row_count;
-    continue when c = 0;
-    insert into public.ordenes(trabajador_id, actividad, titulo, detalle, prioridad, fecha_limite, origen)
-      values (tec, 'Flujómetro', 'Lectura de flujómetro',
-        'Lectura diaria del flujómetro: adjunta una foto del medidor y anota los metros cúbicos. Generada automáticamente el ' ||
-        to_char(momento, 'DD-MM-YYYY') || ' a las ' || to_char(momento, 'HH24:MI') || '.',
-        'Normal', d, 'flujometro')
-      returning id into oid;
-    update public.flujometros set orden_id = oid where fecha = d;
-    n := n + 1;
+    foreach m in array array[2, 1] loop
+      desde := case m when 1 then desde1 else desde2 end;
+      continue when desde is null or momento < desde;
+      continue when exists (select 1 from public.flujometros where fecha = d and medidor = m);
+      insert into public.flujometros(fecha, medidor) values (d, m) on conflict (fecha, medidor) do nothing;
+      get diagnostics c = row_count;
+      continue when c = 0;
+      insert into public.ordenes(trabajador_id, actividad, titulo, detalle, ubicacion, prioridad, fecha_limite, origen, medidor)
+        values (tec, 'Flujómetro', 'Lectura ' || lower(left(public.ot_medidor_nombre(m), 1)) || substr(public.ot_medidor_nombre(m), 2),
+          'Lectura diaria del ' || lower(left(public.ot_medidor_nombre(m), 1)) || substr(public.ot_medidor_nombre(m), 2) ||
+          ': adjunta una foto del medidor y anota los metros cúbicos. Generada automáticamente el ' ||
+          to_char(momento, 'DD-MM-YYYY') || ' a las ' || to_char(momento, 'HH24:MI') || '.',
+          case m when 2 then 'Sala de servidores' else 'Planta de tratamiento' end, 'Normal', d, 'flujometro', m)
+        returning id into oid;
+      update public.flujometros set orden_id = oid where fecha = d and medidor = m;
+      n := n + 1;
+    end loop;
   end loop;
   return n;
 end $$;
@@ -813,7 +840,7 @@ begin
       'trabajador_id', o.trabajador_id, 'trabajador', t.nombre,
       'telefono', case when u.rol in ('admin','control') and o.tipo = 'incidencia' then t.telefono end,
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
-      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada, 'orden_cola', o.orden_cola,
+      'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada, 'orden_cola', o.orden_cola, 'medidor', o.medidor,
       'codigo_actividad', o.codigo_actividad, 'metros_cubicos', o.metros_cubicos, 'descripcion_realizada', o.descripcion_realizada,
       'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado,
       'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada)
@@ -863,8 +890,9 @@ begin
 end $$;
 
 drop function if exists public.ot_crear(text, uuid, text, text, text, text, date);
+drop function if exists public.ot_crear(text, uuid, text, text, text, text, text, date);
 create or replace function public.ot_crear(p_token text, p_trabajador uuid, p_actividad text, p_titulo text, p_detalle text,
-  p_ubicacion text, p_prioridad text, p_fecha date) returns int
+  p_ubicacion text, p_prioridad text, p_fecha date, p_medidor smallint default null) returns int
 language plpgsql security definer set search_path = public, extensions as $$
 declare n int;
 begin
@@ -876,9 +904,11 @@ begin
   if length(trim(coalesce(p_titulo,''))) = 0 or length(trim(coalesce(p_detalle,''))) = 0 then
     raise exception 'Completa el título y el detalle del trabajo.';
   end if;
-  insert into public.ordenes(trabajador_id, actividad, titulo, detalle, ubicacion, prioridad, fecha_limite)
+  if trim(p_actividad) = 'Flujómetro' and coalesce(p_medidor, 1) not in (1, 2) then raise exception 'Elige el flujómetro 1 o 2.'; end if;
+  insert into public.ordenes(trabajador_id, actividad, titulo, detalle, ubicacion, prioridad, fecha_limite, medidor)
     values (p_trabajador, trim(p_actividad), trim(p_titulo), trim(p_detalle), trim(coalesce(p_ubicacion,'')),
-            case when p_prioridad in ('Normal','Alta','Urgente') then p_prioridad else 'Normal' end, p_fecha)
+            case when p_prioridad in ('Normal','Alta','Urgente') then p_prioridad else 'Normal' end, p_fecha,
+            case when trim(p_actividad) = 'Flujómetro' then coalesce(p_medidor, 1) end)
     returning numero into n;
   return n;
 end $$;
@@ -1085,7 +1115,7 @@ end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_cola_nueva','ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
+declare f record; internas text[] := array['ot_medidor_nombre','ot_cola_nueva','ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace
