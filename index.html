@@ -247,8 +247,6 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
         </div>
       </details>
     </section>
-    <section class="filtros" id="filtros" aria-label="Filtrar por estado"></section>
-
     <section class="panel" id="nueva" hidden>
       <h2>Nueva orden de trabajo</h2>
       <form id="form-nueva" class="lista" autocomplete="off">
@@ -293,29 +291,6 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </form>
     </section>
 
-    <section class="panel" id="incidencia" hidden>
-      <h2>Nueva incidencia fuera de horario</h2>
-      <p class="nota" id="i-horario"></p>
-      <p class="nota" id="i-turno"></p>
-      <form id="form-inc" class="lista" autocomplete="off">
-        <div class="fila">
-          <label for="i-trab">Técnico de turno
-            <select id="i-trab" required></select>
-          </label>
-          <label for="i-lugar">Ubicación
-            <input id="i-lugar" maxlength="120" placeholder="Ej.: Km 80, poste SOS">
-          </label>
-        </div>
-        <label for="i-desc">Qué está pasando
-          <textarea id="i-desc" required maxlength="4000" placeholder="Describe la incidencia con el mayor detalle posible."></textarea>
-        </label>
-        <div class="acciones">
-          <button class="btn principal" id="i-enviar" type="submit" disabled>Enviar incidencia</button>
-          <span class="nota" id="i-estado"></span>
-        </div>
-      </form>
-    </section>
-
     <section class="panel" id="hallazgo" hidden>
       <details>
         <summary>Informar un autohallazgo</summary>
@@ -354,6 +329,36 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
       </details>
     </section>
 
+    <section class="panel" id="incidencia" hidden>
+      <h2>Nueva incidencia fuera de horario</h2>
+      <p class="nota" id="i-horario"></p>
+      <p class="nota" id="i-turno"></p>
+      <form id="form-inc" class="lista" autocomplete="off">
+        <div class="fila">
+          <label for="i-trab">Técnico de turno
+            <select id="i-trab" required></select>
+          </label>
+          <label for="i-lugar">Ubicación
+            <input id="i-lugar" maxlength="120" placeholder="Ej.: Km 80, poste SOS">
+          </label>
+        </div>
+        <label for="i-desc">Qué está pasando
+          <textarea id="i-desc" required maxlength="4000" placeholder="Describe la incidencia con el mayor detalle posible."></textarea>
+        </label>
+        <div class="acciones">
+          <button class="btn principal" id="i-enviar" type="submit" disabled>Enviar incidencia</button>
+          <span class="nota" id="i-estado"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" id="buscador" role="search" hidden>
+      <label for="buscar">Buscar trabajos
+        <input id="buscar" type="search" autocomplete="off" placeholder="Ej.: OT-0024, poste, km 33, Ricardo, luminaria, 14-11-2026">
+      </label>
+      <p class="nota" id="buscar-info" role="status" aria-live="polite"></p>
+    </section>
+    <section class="filtros" id="filtros" aria-label="Filtrar por estado"></section>
     <section class="lista" id="lista" aria-live="polite"></section>
 
     <section class="panel" id="reportes" hidden>
@@ -583,9 +588,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=22"></script>
-<script src="calendario.js?v=22"></script>
-<script src="app.js?v=22"></script>
-<script src="bitacoras.js?v=22"></script>
+<script src="config.js?v=23"></script>
+<script src="calendario.js?v=23"></script>
+<script src="app.js?v=23"></script>
+<script src="bitacoras.js?v=23"></script>
 </body>
 </html>

@@ -7,6 +7,12 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 - Al terminar, escribe el código de actividad y la descripción del trabajo realizado, y sube una foto (puede agregar una segunda).
 - El administrador revisa el reporte y cierra la OT, o la devuelve con una nota.
 
+## Buscador
+
+- Arriba de la lista de órdenes está **Buscar trabajos**: busca por palabras en todo el historial de OT, incidencias y autohallazgos.
+- Revisa el código (OT-0024, INC-0003, AH-0001; también "ot24" o "inc-3"), título, detalle, código de actividad, ubicación, técnico, quién la creó, lo que informó el técnico, notas, estado y fechas (dd-mm-aaaa).
+- Con varias palabras muestra los trabajos que tienen todas. No distingue mayúsculas ni tildes. Los filtros de estado siguen funcionando sobre los resultados.
+
 ## OT de a una
 
 - Cada técnico hace sus OT de a una: solo puede aceptar una nueva cuando envió el reporte de la que tiene en ejecución (o corrigió la que le devolvieron).
