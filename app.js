@@ -1273,13 +1273,26 @@ function resumenFlujo(lect, desde, hasta){
   const total = con.reduce((a, l) => a + l.consumo, 0), diasCubiertos = con.reduce((a, l) => a + l.dias, 0);
   return {dias, del, con, transcurridos, pendientes, max, min, total, diasCubiertos, promedio:diasCubiertos ? total / diasCubiertos : null};
 }
+// El reporte cubre el rango que elige el administrador (Desde / Hasta). Por defecto, el mes en curso hasta hoy.
+const MAX_DIAS_FLUJO = 366;
+function finDeMes(mes){ return mes + "-" + String(new Date(Number(mes.slice(0,4)), Number(mes.slice(5,7)), 0).getDate()).padStart(2,"0"); }
+function rangoFlujo(){
+  const hoy = hoyIso();
+  if (!$("fl-desde").value) $("fl-desde").value = hoy.slice(0,7) + "-01";
+  if (!$("fl-hasta").value) $("fl-hasta").value = hoy;
+  const desde = $("fl-desde").value, hasta = $("fl-hasta").value;
+  if (desde > hasta) return {error:"La fecha Desde tiene que ser anterior o igual a Hasta."};
+  const n = Math.round((new Date(hasta + "T12:00:00Z") - new Date(desde + "T12:00:00Z")) / 86400000) + 1;
+  if (n > MAX_DIAS_FLUJO) return {error:"Elige un rango de hasta " + MAX_DIAS_FLUJO + " días."};
+  return {desde, hasta, n};
+}
 function periodosFlujo(){
-  const ref = $("fl-fecha").value || hoyIso(), lun = lunesDe(ref), mes = ref.slice(0,7);
-  const finMes = mes + "-" + String(new Date(Number(mes.slice(0,4)), Number(mes.slice(5,7)), 0).getDate()).padStart(2,"0");
-  const lect = lecturasFlujo();
-  return {lect, periodos:[
-    {titulo:"Semana " + semanaIso(lun) + " (lunes " + fechaCorta(lun) + " al domingo " + fechaCorta(sumarIso(lun, 6)) + ")", r:resumenFlujo(lect, lun, sumarIso(lun, 6)), cada:1, rot:d => diaTxt(d).slice(0,3) + " " + d.slice(8)},
-    {titulo:mesTxt(mes), r:resumenFlujo(lect, mes + "-01", finMes), cada:5, rot:d => String(Number(d.slice(8)))}]};
+  const g = rangoFlujo();
+  if (g.error) return {error:g.error, periodos:[]};
+  const {desde, hasta, n} = g, lect = lecturasFlujo(), variosMeses = desde.slice(0,7) !== hasta.slice(0,7);
+  const rot = n <= 14 ? d => diaTxt(d).slice(0,3) + " " + d.slice(8) : variosMeses ? d => d.slice(8) + "-" + d.slice(5,7) : d => String(Number(d.slice(8)));
+  const titulo = desde === hasta ? diaTxt(desde) : "Del " + fechaCorta(desde) + " al " + fechaCorta(hasta) + " (" + n + " días)";
+  return {lect, desde, hasta, periodos:[{titulo, r:resumenFlujo(lect, desde, hasta), cada:n <= 14 ? 1 : Math.ceil(n / 12), rot}]};
 }
 function promTxt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:1}); }
 function consumoTxt(l){ return l.consumo == null ? "—" : m3Txt(l.consumo) + (l.dias > 1 ? " (en " + l.dias + " días)" : ""); }
@@ -1289,9 +1302,9 @@ function filasFlujo(del){
 const CAB_FLUJO = ["Día", "Técnico", "Lectura del medidor (m³)", "Consumo: lectura menos la anterior (m³)", "Informada el"];
 function renderFlujo(){
   if (!S.admin) return;
-  if (!$("fl-fecha").value) $("fl-fecha").value = hoyIso();
   const caja = $("fl-cuerpo"); caja.replaceChildren();
-  const {periodos} = periodosFlujo();
+  const {periodos, error} = periodosFlujo();
+  if (error){ caja.append(h("p", {class:"mensaje"}, error)); return; }
   for (const p of periodos){
     const r = p.r, hay = r.con.length > 0;
     caja.append(h("h3", null, p.titulo));
@@ -1309,10 +1322,19 @@ function renderFlujo(){
   }
   caja.append(h("p", {class:"nota"}, "El consumo de cada día es su lectura menos la lectura anterior. Si falta la lectura de un día, la diferencia siguiente cubre varios días y así se indica. La primera lectura registrada no tiene consumo porque no hay una anterior. Cada día cuenta con su última lectura enviada, aunque todavía no hayas cerrado la OT."));
 }
-$("fl-fecha").addEventListener("change", () => { $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); });
+function cambioFlujo(){ $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); }
+$("fl-desde").addEventListener("change", cambioFlujo);
+$("fl-hasta").addEventListener("change", cambioFlujo);
+// Atajos: llenan Desde y Hasta.
+for (const [id, f] of [["fl-semana", () => { const l = lunesDe(hoyIso()); return [l, sumarIso(l, 6)]; }],
+                       ["fl-mes", () => { const m = hoyIso().slice(0,7); return [m + "-01", finDeMes(m)]; }],
+                       ["fl-mes-ant", () => { const m = sumarIso(hoyIso().slice(0,7) + "-01", -1).slice(0,7); return [m + "-01", finDeMes(m)]; }]])
+  $(id).addEventListener("click", () => { const [d, h2] = f(); $("fl-desde").value = d; $("fl-hasta").value = h2; cambioFlujo(); });
 let urlFlujo = null;
 $("fl-generar").addEventListener("click", async () => {
-  const {periodos} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
+  const {periodos, error, desde, hasta} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
+  enl.replaceChildren();
+  if (error){ est.textContent = error; return; }
   let logo = "";
   try { logo = await aDataUrl(await (await fetch("logo.png")).blob()); } catch (e){}
   const bloque = p => {
@@ -1327,20 +1349,20 @@ $("fl-generar").addEventListener("click", async () => {
         filas.map(f => "<tr>" + f.map((c, i) => "<td" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</td>").join("") + "</tr>").join("") + "</table>"
         : '<p class="pie">No hay lecturas en este período.</p>');
   };
-  const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reporte de flujómetro</title><style>' +
+  const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reporte de flujómetro ' + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + "</title><style>" +
     "body{font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#002d57;margin:0;background:#fff}main{max-width:820px;margin:0 auto;padding:24px 20px 60px}" +
     "header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:4px solid #01add3;padding-bottom:12px}header img{height:64px}h1{font-size:22px;margin:0}h2{font-size:17px;margin:26px 0 8px}" +
     "table{border-collapse:collapse;width:100%;margin-bottom:12px}th,td{text-align:left;vertical-align:top;padding:4px 10px 4px 0;border-top:1px solid #cfdde6}.n{text-align:right;white-space:nowrap}.res th{width:200px;font-weight:600;color:#4f6478}" +
     ".pie{color:#4f6478}.barra{margin:14px 0}.barra button{font:600 14px system-ui,sans-serif;padding:9px 16px;border-radius:4px;border:1px solid #002d57;background:#002d57;color:#fff;cursor:pointer}" +
     "@media print{.barra{display:none}main{padding:0}}</style></head><body><main>" +
-    "<header><div><h1>Reporte de flujómetro</h1><p>Semanal y mensual · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
+    "<header><div><h1>Reporte de flujómetro</h1><p>Del " + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + " · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
     '<div class="barra"><button type="button" onclick="window.print()">Imprimir o guardar como PDF</button></div>' + periodos.map(bloque).join("") +
     '<p class="pie">Reporte generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". El consumo de cada día es su lectura del medidor menos la lectura anterior.</p></main></body></html>";
   if (urlFlujo) URL.revokeObjectURL(urlFlujo);
   urlFlujo = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
   est.textContent = "Reporte listo.";
   enl.replaceChildren(h("a", {class:"btn wa", href:urlFlujo, target:"_blank", rel:"noopener"}, "Abrir reporte"),
-    h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro_" + ($("fl-fecha").value || hoyIso()) + ".html"}, "Descargar archivo"));
+    h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro_" + desde + "_al_" + hasta + ".html"}, "Descargar archivo"));
 });
 
 /* ---------- horas extras ---------- */
