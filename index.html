@@ -412,14 +412,20 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
     <section class="panel" id="flujo" hidden>
       <h2>Reporte de flujómetro</h2>
-      <p class="nota">Muestra la semana y el mes del día que elijas. La lectura se asigna sola todos los días a las 8:30 al técnico de turno de emergencia.</p>
+      <p class="nota">Elige desde qué fecha hasta qué fecha quieres el reporte. La lectura se asigna sola todos los días a las 8:30 al técnico de turno de emergencia.</p>
       <div class="fila" style="align-items:end">
-        <label for="fl-fecha">Día de referencia
-          <input id="fl-fecha" type="date">
+        <label for="fl-desde">Desde
+          <input id="fl-desde" type="date">
         </label>
-        <div class="acciones">
-          <button class="btn" type="button" id="fl-generar">Generar reporte para imprimir</button>
-        </div>
+        <label for="fl-hasta">Hasta
+          <input id="fl-hasta" type="date">
+        </label>
+      </div>
+      <div class="acciones">
+        <button class="btn chico" type="button" id="fl-semana">Esta semana</button>
+        <button class="btn chico" type="button" id="fl-mes">Este mes</button>
+        <button class="btn chico" type="button" id="fl-mes-ant">Mes anterior</button>
+        <button class="btn" type="button" id="fl-generar">Generar reporte para imprimir</button>
       </div>
       <div class="acciones" id="fl-enlaces"></div>
       <p class="nota" id="fl-estado"></p>
@@ -535,9 +541,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=19"></script>
-<script src="calendario.js?v=19"></script>
-<script src="app.js?v=19"></script>
-<script src="bitacoras.js?v=19"></script>
+<script src="config.js?v=20"></script>
+<script src="calendario.js?v=20"></script>
+<script src="app.js?v=20"></script>
+<script src="bitacoras.js?v=20"></script>
 </body>
 </html>

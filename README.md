@@ -64,7 +64,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 - El técnico de turno de emergencia recibe sola, todos los días a las 8:30 (también fines de semana y feriados), una OT de actividad **Flujómetro**. El administrador también puede crear una a mano eligiendo esa actividad.
 - Su reporte solo pide la foto del medidor y los metros cúbicos.
-- La pestaña **Flujómetro** del administrador muestra la semana y el mes del día elegido: consumo promedio por día, consumo del período, mayor y menor consumo, días con lectura, gráfico y tabla. El técnico anota lo que marca el medidor y el consumo de cada día es su lectura menos la anterior. **Generar reporte para imprimir** arma una versión para imprimir o guardar como PDF.
+- La pestaña **Flujómetro** del administrador muestra el rango de fechas elegido en **Desde** y **Hasta** (con atajos para esta semana, este mes y el mes anterior; hasta 366 días): consumo promedio por día, consumo del período, mayor y menor consumo, días con lectura, gráfico y tabla. El técnico anota lo que marca el medidor y el consumo de cada día es su lectura menos la anterior. **Generar reporte para imprimir** arma una versión para imprimir o guardar como PDF.
 
 ## Horas extras
 
