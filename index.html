@@ -263,6 +263,12 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
         <label for="n-act">Código de actividad
           <select id="n-act" required></select>
         </label>
+        <label for="n-medidor" id="n-medidor-caja" hidden>Flujómetro
+          <select id="n-medidor">
+            <option value="1">Flujómetro 1 (planta de tratamiento)</option>
+            <option value="2">Flujómetro 2 (sala de servidores)</option>
+          </select>
+        </label>
         <label for="n-act-otro" id="n-act-otro-caja" hidden>Código nuevo de actividad
           <input id="n-act-otro" maxlength="100" placeholder="Ej.: Apoyo a obra externa">
         </label>
@@ -412,7 +418,13 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
     <section class="panel" id="flujo" hidden>
       <h2>Reporte de flujómetro</h2>
-      <p class="nota">Elige desde qué fecha hasta qué fecha quieres el reporte. La lectura se asigna sola todos los días a las 8:30 al técnico de turno de emergencia.</p>
+      <p class="nota">Elige el flujómetro y desde qué fecha hasta qué fecha quieres el reporte. Las lecturas de los dos flujómetros se asignan solas todos los días a las 8:30 al técnico de turno de emergencia.</p>
+      <label for="fl-medidor">Flujómetro
+        <select id="fl-medidor">
+          <option value="1">Flujómetro 1 (planta de tratamiento)</option>
+          <option value="2">Flujómetro 2 (sala de servidores)</option>
+        </select>
+      </label>
       <div class="fila" style="align-items:end">
         <label for="fl-desde">Desde
           <input id="fl-desde" type="date">
@@ -541,9 +553,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=20"></script>
-<script src="calendario.js?v=20"></script>
-<script src="app.js?v=20"></script>
-<script src="bitacoras.js?v=20"></script>
+<script src="config.js?v=21"></script>
+<script src="calendario.js?v=21"></script>
+<script src="app.js?v=21"></script>
+<script src="bitacoras.js?v=21"></script>
 </body>
 </html>

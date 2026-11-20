@@ -64,6 +64,9 @@ function esOT(o){ return o.tipo !== "incidencia" && o.tipo !== "hallazgo"; }
 function esHal(o){ return o.tipo === "hallazgo"; }
 function codigo(o){ return (o.tipo === "incidencia" ? "INC-" : esHal(o) ? "AH-" : "OT-") + String(o.numero || 0).padStart(4,"0"); }
 function esFlujo(o){ return esOT(o) && o.actividad === FLUJO; }
+// Hay dos flujómetros. Las lecturas anteriores al segundo medidor no traen número y son del 1.
+const MEDIDORES = {1:"Flujómetro 1 (planta de tratamiento)", 2:"Flujómetro 2 (sala de servidores)"};
+function medidorDe(o){ return Number(o.medidor) === 2 ? 2 : 1; }
 function m3Txt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:3}); }
 const ESTADOS = {asignada:"Asignada", ejecucion:"En ejecución", devuelta:"Devuelta para corregir", revision:"Por revisar", cerrada:"Cerrada"};
 
@@ -372,6 +375,7 @@ function tarjeta(o){
     o.ubicacion ? h("span", null, o.ubicacion) : null,
     o.origen === "plan" ? h("span", null, "Preventivo") : null,
     o.origen === "ronda" ? h("span", null, "Ronda automática de turno") : null,
+    esFlujo(o) ? h("span", null, MEDIDORES[medidorDe(o)]) : null,
     o.origen === "flujometro" ? h("span", null, "Lectura diaria automática") : null,
     !inc && o.prioridad && o.prioridad !== "Normal" ? h("span", null, "Prioridad " + o.prioridad.toLowerCase()) : null,
     o.fecha_limite ? h("span", {class: vencida ? "vencida" : null}, (vencida ? "Vencida el " : "Límite ") + fechaCorta(o.fecha_limite)) : null,
@@ -553,7 +557,7 @@ function formFlujo(o){
   const b = S.borradores[id] || (S.borradores[id] = {m3:o.metros_cubicos != null ? String(o.metros_cubicos).replace(".", ",") : "", file:null, vista:null});
   const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o, 1) : null;
   return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarFlujo(o); }},
-    h("span", {class:"bloque"}, h("span", {class:"rot"}, "Lectura del flujómetro")),
+    h("span", {class:"bloque"}, h("span", {class:"rot"}, "Lectura del " + MEDIDORES[medidorDe(o)].charAt(0).toLowerCase() + MEDIDORES[medidorDe(o)].slice(1))),
     h("label", {for:"m3-"+id}, "Metros cúbicos (m³)",
       h("input", {id:"m3-"+id, required:true, inputmode:"decimal", maxlength:"14", placeholder:"Ej.: 1250,5", value:b.m3,
         oninput: ev => { b.m3 = ev.target.value; }})),
@@ -869,11 +873,12 @@ $("form-nueva").addEventListener("submit", async ev => {
   btn.disabled = true; est.textContent = "Guardando…";
   try {
     const n = await rpc("ot_crear", {p_token:S.token, p_trabajador:wid, p_actividad:act, p_titulo:$("n-titulo").value, p_detalle:$("n-detalle").value,
-      p_ubicacion:$("n-lugar").value, p_prioridad:$("n-prio").value, p_fecha:$("n-fecha").value || null});
+      p_ubicacion:$("n-lugar").value, p_prioridad:$("n-prio").value, p_fecha:$("n-fecha").value || null,
+      p_medidor: act === FLUJO ? Number($("n-medidor").value) || 1 : null});
     const t = S.trabajadores.find(x => x.id === wid);
     est.textContent = numTxt(n) + " asignada" + (t ? " a " + t.nombre : "") + ".";
     for (const k of ["n-titulo","n-detalle","n-lugar","n-fecha"]) $(k).value = "";
-    $("n-prio").value = "Normal"; $("n-act").value = ""; $("n-act-otro").value = ""; $("n-act-otro-caja").hidden = true;
+    $("n-prio").value = "Normal"; $("n-act").value = ""; $("n-act-otro").value = ""; $("n-act-otro-caja").hidden = true; $("n-medidor-caja").hidden = true;
     await cargar();
   } catch (e){ est.textContent = e.message; }
   btn.disabled = false;
@@ -886,11 +891,17 @@ $("n-act").append(h("option", {value:OTROS}, "Otros (escribir un código nuevo)"
 $("n-act").addEventListener("change", () => {
   const otro = $("n-act").value === OTROS;
   $("n-act-otro-caja").hidden = !otro;
+  $("n-medidor-caja").hidden = $("n-act").value !== FLUJO;
   if ($("n-act").value === FLUJO){
-    if (!$("n-titulo").value.trim()) $("n-titulo").value = "Lectura de flujómetro";
+    if (!$("n-titulo").value.trim()) $("n-titulo").value = "Lectura " + MEDIDORES[Number($("n-medidor").value) || 1].replace(/^F/, "f");
     if (!$("n-detalle").value.trim()) $("n-detalle").value = "Adjunta una foto del medidor y anota los metros cúbicos.";
   }
   if (otro) $("n-act-otro").focus();
+});
+
+$("n-medidor").addEventListener("change", () => {
+  const t = $("n-titulo").value.trim();
+  if (!t || /^Lectura (de )?flujómetro/i.test(t)) $("n-titulo").value = "Lectura " + MEDIDORES[Number($("n-medidor").value) || 1].replace(/^F/, "f");
 });
 
 /* ---------- incidencias (centro de control) ---------- */
@@ -1248,10 +1259,10 @@ $("inf-generar").addEventListener("click", generarInforme);
 /* ---------- reporte de flujómetro ---------- */
 // El técnico anota lo que marca el medidor (acumulado). El consumo de un día es su lectura menos la lectura anterior.
 // Una lectura por día: la última enviada de ese día. El día es la fecha límite de la OT (o el día en que se creó).
-function lecturasFlujo(){
+function lecturasFlujo(med){
   const porDia = {};
   for (const o of S.ordenes){
-    if (!esFlujo(o) || o.metros_cubicos == null || !o.enviado) continue;
+    if (!esFlujo(o) || medidorDe(o) !== med || o.metros_cubicos == null || !o.enviado) continue;
     const dia = diaRef(o), ant = porDia[dia];
     if (!ant || new Date(o.enviado) > new Date(ant.enviado)) porDia[dia] = {dia, m3:Number(o.metros_cubicos), tecnico:o.trabajador, enviado:o.enviado, numero:o.numero};
   }
@@ -1263,12 +1274,12 @@ function lecturasFlujo(){
   });
   return lect;
 }
-function resumenFlujo(lect, desde, hasta){
+function resumenFlujo(lect, desde, hasta, med){
   const hoy = hoyIso(), fin = hasta < hoy ? hasta : hoy, dias = [];
   for (let d = desde; d <= hasta; d = sumarIso(d, 1)) dias.push(d);
   const del = lect.filter(l => l.dia >= desde && l.dia <= hasta), con = del.filter(l => l.consumo != null);
   const transcurridos = dias.filter(d => d <= fin).length;
-  const pendientes = S.ordenes.filter(o => esFlujo(o) && !hecha(o) && diaRef(o) >= desde && diaRef(o) <= fin).length;
+  const pendientes = S.ordenes.filter(o => esFlujo(o) && medidorDe(o) === med && !hecha(o) && diaRef(o) >= desde && diaRef(o) <= fin).length;
   const max = con.reduce((m, l) => !m || l.consumo > m.consumo ? l : m, null), min = con.reduce((m, l) => !m || l.consumo < m.consumo ? l : m, null);
   const total = con.reduce((a, l) => a + l.consumo, 0), diasCubiertos = con.reduce((a, l) => a + l.dias, 0);
   return {dias, del, con, transcurridos, pendientes, max, min, total, diasCubiertos, promedio:diasCubiertos ? total / diasCubiertos : null};
@@ -1289,10 +1300,11 @@ function rangoFlujo(){
 function periodosFlujo(){
   const g = rangoFlujo();
   if (g.error) return {error:g.error, periodos:[]};
-  const {desde, hasta, n} = g, lect = lecturasFlujo(), variosMeses = desde.slice(0,7) !== hasta.slice(0,7);
+  const med = Number($("fl-medidor").value) === 2 ? 2 : 1;
+  const {desde, hasta, n} = g, lect = lecturasFlujo(med), variosMeses = desde.slice(0,7) !== hasta.slice(0,7);
   const rot = n <= 14 ? d => diaTxt(d).slice(0,3) + " " + d.slice(8) : variosMeses ? d => d.slice(8) + "-" + d.slice(5,7) : d => String(Number(d.slice(8)));
   const titulo = desde === hasta ? diaTxt(desde) : "Del " + fechaCorta(desde) + " al " + fechaCorta(hasta) + " (" + n + " días)";
-  return {lect, desde, hasta, periodos:[{titulo, r:resumenFlujo(lect, desde, hasta), cada:n <= 14 ? 1 : Math.ceil(n / 12), rot}]};
+  return {lect, desde, hasta, med, periodos:[{titulo, r:resumenFlujo(lect, desde, hasta, med), cada:n <= 14 ? 1 : Math.ceil(n / 12), rot}]};
 }
 function promTxt(n){ return Number(n).toLocaleString("es-CL", {maximumFractionDigits:1}); }
 function consumoTxt(l){ return l.consumo == null ? "—" : m3Txt(l.consumo) + (l.dias > 1 ? " (en " + l.dias + " días)" : ""); }
@@ -1324,6 +1336,7 @@ function renderFlujo(){
 }
 function cambioFlujo(){ $("fl-enlaces").replaceChildren(); $("fl-estado").textContent = ""; renderFlujo(); }
 $("fl-desde").addEventListener("change", cambioFlujo);
+$("fl-medidor").addEventListener("change", cambioFlujo);
 $("fl-hasta").addEventListener("change", cambioFlujo);
 // Atajos: llenan Desde y Hasta.
 for (const [id, f] of [["fl-semana", () => { const l = lunesDe(hoyIso()); return [l, sumarIso(l, 6)]; }],
@@ -1332,7 +1345,7 @@ for (const [id, f] of [["fl-semana", () => { const l = lunesDe(hoyIso()); return
   $(id).addEventListener("click", () => { const [d, h2] = f(); $("fl-desde").value = d; $("fl-hasta").value = h2; cambioFlujo(); });
 let urlFlujo = null;
 $("fl-generar").addEventListener("click", async () => {
-  const {periodos, error, desde, hasta} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
+  const {periodos, error, desde, hasta, med} = periodosFlujo(), est = $("fl-estado"), enl = $("fl-enlaces");
   enl.replaceChildren();
   if (error){ est.textContent = error; return; }
   let logo = "";
@@ -1349,20 +1362,20 @@ $("fl-generar").addEventListener("click", async () => {
         filas.map(f => "<tr>" + f.map((c, i) => "<td" + (i > 1 && i < 4 ? ' class="n"' : "") + ">" + esc(c) + "</td>").join("") + "</tr>").join("") + "</table>"
         : '<p class="pie">No hay lecturas en este período.</p>');
   };
-  const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reporte de flujómetro ' + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + "</title><style>" +
+  const doc = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reporte ' + esc(MEDIDORES[med]) + " " + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + "</title><style>" +
     "body{font:14px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif;color:#002d57;margin:0;background:#fff}main{max-width:820px;margin:0 auto;padding:24px 20px 60px}" +
     "header{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:4px solid #01add3;padding-bottom:12px}header img{height:64px}h1{font-size:22px;margin:0}h2{font-size:17px;margin:26px 0 8px}" +
     "table{border-collapse:collapse;width:100%;margin-bottom:12px}th,td{text-align:left;vertical-align:top;padding:4px 10px 4px 0;border-top:1px solid #cfdde6}.n{text-align:right;white-space:nowrap}.res th{width:200px;font-weight:600;color:#4f6478}" +
     ".pie{color:#4f6478}.barra{margin:14px 0}.barra button{font:600 14px system-ui,sans-serif;padding:9px 16px;border-radius:4px;border:1px solid #002d57;background:#002d57;color:#fff;cursor:pointer}" +
     "@media print{.barra{display:none}main{padding:0}}</style></head><body><main>" +
-    "<header><div><h1>Reporte de flujómetro</h1><p>Del " + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + " · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
+    "<header><div><h1>Reporte de flujómetro</h1><p><b>" + esc(MEDIDORES[med]) + "</b></p><p>Del " + esc(fechaCorta(desde)) + " al " + esc(fechaCorta(hasta)) + " · Mantenimiento</p></div>" + (logo ? '<img src="' + logo + '" alt="Ruta de la Fruta">' : "") + "</header>" +
     '<div class="barra"><button type="button" onclick="window.print()">Imprimir o guardar como PDF</button></div>' + periodos.map(bloque).join("") +
     '<p class="pie">Reporte generado el ' + esc(fecha(new Date())) + " por " + esc(S.yo.nombre) + ". El consumo de cada día es su lectura del medidor menos la lectura anterior.</p></main></body></html>";
   if (urlFlujo) URL.revokeObjectURL(urlFlujo);
   urlFlujo = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
   est.textContent = "Reporte listo.";
   enl.replaceChildren(h("a", {class:"btn wa", href:urlFlujo, target:"_blank", rel:"noopener"}, "Abrir reporte"),
-    h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro_" + desde + "_al_" + hasta + ".html"}, "Descargar archivo"));
+    h("a", {class:"btn", href:urlFlujo, download:"Reporte_flujometro" + med + "_" + desde + "_al_" + hasta + ".html"}, "Descargar archivo"));
 });
 
 /* ---------- horas extras ---------- */
