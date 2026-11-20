@@ -671,6 +671,56 @@ begin
   return n;
 end $$;
 
+-- Lecturas de días anteriores al sistema: el administrador las carga a mano (fecha, medidor y m³).
+-- No son OT. Si un día ya tiene la lectura de una OT, se usa esa y no se acepta la manual.
+create table if not exists public.flujo_manual (
+  fecha date not null,
+  medidor smallint not null check (medidor in (1, 2)),
+  m3 numeric not null check (m3 >= 0),
+  cargada_por uuid references public.usuarios(id) on delete set null,
+  cargada timestamptz not null default now(),
+  primary key (fecha, medidor)
+);
+alter table public.flujo_manual enable row level security;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    revoke all on public.flujo_manual from anon, authenticated;
+  end if;
+end $$;
+
+-- p_filas: [{"fecha":"2026-10-01","m3":1250.5}, ...]. Guarda o corrige; devuelve cuántas guardó.
+create or replace function public.ot_flujo_manual_guardar(p_token text, p_medidor smallint, p_filas jsonb) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; f jsonb; d date; v numeric; otn int; n int := 0; hoy date := (now() at time zone 'America/Santiago')::date;
+begin
+  u := public.ot_admin(p_token);
+  if p_medidor not in (1, 2) then raise exception 'Elige el flujómetro 1 o 2.'; end if;
+  if jsonb_typeof(p_filas) <> 'array' or jsonb_array_length(p_filas) = 0 then raise exception 'No hay lecturas para guardar.'; end if;
+  if jsonb_array_length(p_filas) > 1000 then raise exception 'Son demasiadas lecturas. Cárgalas por partes (hasta 1000).'; end if;
+  for f in select * from jsonb_array_elements(p_filas) loop
+    d := (f->>'fecha')::date; v := (f->>'m3')::numeric;
+    if d is null or d > hoy then raise exception 'La fecha % no es válida: tiene que ser hoy o antes.', coalesce(f->>'fecha', '(vacía)'); end if;
+    if v is null or v < 0 then raise exception 'La lectura del % no es un número válido.', to_char(d, 'DD-MM-YYYY'); end if;
+    select o.numero into otn from public.ordenes o
+     where o.actividad = 'Flujómetro' and coalesce(o.medidor, 1) = p_medidor and o.fecha_limite = d
+       and o.metros_cubicos is not null and o.enviado is not null limit 1;
+    if found then raise exception 'El % ya tiene la lectura de la OT-%. Esa no se reemplaza a mano.', to_char(d, 'DD-MM-YYYY'), lpad(otn::text, 4, '0'); end if;
+    insert into public.flujo_manual(fecha, medidor, m3, cargada_por) values (d, p_medidor, v, u.id)
+      on conflict (fecha, medidor) do update set m3 = excluded.m3, cargada_por = excluded.cargada_por, cargada = now();
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+create or replace function public.ot_flujo_manual_eliminar(p_token text, p_medidor smallint, p_fecha date) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public.ot_admin(p_token);
+  delete from public.flujo_manual where medidor = p_medidor and fecha = p_fecha;
+  if not found then raise exception 'Esa lectura ya no existe.'; end if;
+end $$;
+
 -- ---------- horas extras ----------
 -- Los períodos van del día 11 de un mes al día 10 del siguiente.
 
@@ -827,7 +877,7 @@ end $$;
 create or replace function public.ot_listar(p_token text) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; ords jsonb; trabs jsonb := '[]'::jsonb; plan jsonb := '[]'::jsonb; fers jsonb := '[]'::jsonb;
-  turnos jsonb := '[]'::jsonb; cal jsonb := '[]'::jsonb; actual uuid := public.ot_turno_actual();
+  turnos jsonb := '[]'::jsonb; cal jsonb := '[]'::jsonb; fman jsonb := '[]'::jsonb; actual uuid := public.ot_turno_actual();
   inicio date := public.ot_turno_inicio((now() at time zone 'America/Santiago')::timestamp);
 begin
   u := public.ot_quien(p_token);
@@ -868,13 +918,16 @@ begin
       into cal from generate_series(0, 25) as i;
     select coalesce(jsonb_agg(jsonb_build_object('fecha', fecha, 'nombre', nombre) order by fecha), '[]'::jsonb) into fers
       from public.feriados where fecha >= (now() at time zone 'America/Santiago')::date;
+    select coalesce(jsonb_agg(jsonb_build_object('fecha', fm.fecha, 'medidor', fm.medidor, 'm3', fm.m3, 'cargada', fm.cargada, 'cargada_por', cu.nombre)
+      order by fm.medidor, fm.fecha), '[]'::jsonb) into fman
+      from public.flujo_manual fm left join public.usuarios cu on cu.id = fm.cargada_por;
   elsif u.rol = 'control' then
     select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', true, 'rol', rol, 'de_turno', id = actual, 'telefono', telefono)
       order by nombre), '[]'::jsonb) into trabs from public.usuarios
      where rol = 'trabajador' and activo and (turno_orden is not null or id = actual);
   end if;
   return jsonb_build_object('ordenes', ords, 'trabajadores', trabs, 'plan', plan, 'feriados', fers, 'turnos', turnos,
-    'turnos_calendario', cal,
+    'turnos_calendario', cal, 'flujo_manual', fman,
     'fuera_horario', public.ot_fuera_horario() or (u.rol = 'control' and u.sin_horario), 'sin_horario', u.sin_horario);
 end $$;
 

@@ -439,6 +439,36 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
         <button class="btn chico" type="button" id="fl-mes-ant">Mes anterior</button>
         <button class="btn" type="button" id="fl-generar">Generar reporte para imprimir</button>
       </div>
+      <details id="fm-caja">
+        <summary id="fm-titulo">Cargar lecturas anteriores</summary>
+        <div class="lista" style="margin-top:10px">
+          <p class="nota">Para los días antes de que el sistema tomara las lecturas. Se usan en el reporte igual que las de los técnicos. Si un día ya tiene la lectura de una OT, vale la de la OT.</p>
+          <label for="fm-medidor">Flujómetro
+            <select id="fm-medidor">
+              <option value="1">Flujómetro 1 (planta de tratamiento)</option>
+              <option value="2">Flujómetro 2 (sala de servidores)</option>
+            </select>
+          </label>
+          <h3>Una lectura</h3>
+          <div class="fila" style="align-items:end">
+            <label for="fm-fecha">Día
+              <input id="fm-fecha" type="date">
+            </label>
+            <label for="fm-m3">Lectura del medidor (m³)
+              <input id="fm-m3" inputmode="decimal" maxlength="14" placeholder="Ej.: 1250,5">
+            </label>
+            <div class="acciones"><button class="btn principal" type="button" id="fm-agregar">Guardar lectura</button></div>
+          </div>
+          <h3>Varias lecturas</h3>
+          <label for="fm-texto">Una lectura por línea: la fecha y los m³. Puedes copiar dos columnas desde Excel y pegarlas aquí.
+            <textarea id="fm-texto" rows="6" placeholder="01-10-2026	1250,5&#10;02-10-2026	1262&#10;03-10-2026	1270,8"></textarea>
+          </label>
+          <div class="acciones"><button class="btn principal" type="button" id="fm-guardar">Guardar lecturas</button></div>
+          <p class="nota" id="fm-estado" role="status"></p>
+          <h3>Lecturas cargadas a mano</h3>
+          <div id="fm-lista"></div>
+        </div>
+      </details>
       <div class="acciones" id="fl-enlaces"></div>
       <p class="nota" id="fl-estado"></p>
       <div class="lista" id="fl-cuerpo" style="gap:14px"></div>
@@ -553,9 +583,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=21"></script>
-<script src="calendario.js?v=21"></script>
-<script src="app.js?v=21"></script>
-<script src="bitacoras.js?v=21"></script>
+<script src="config.js?v=22"></script>
+<script src="calendario.js?v=22"></script>
+<script src="app.js?v=22"></script>
+<script src="bitacoras.js?v=22"></script>
 </body>
 </html>
