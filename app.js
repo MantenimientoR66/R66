@@ -380,20 +380,108 @@ function render(){
 
 function bloque(rot, ...kids){ return h("div", {class:"bloque"}, h("span", {class:"rot"}, rot), ...kids); }
 
-function claveFoto(o, n){ return o.id + "|" + (o.enviado || "") + (n === 2 ? "|2" : ""); }
+// Fotos guardadas de un trabajo: números de 1 a 5 (foto, foto2 … foto5).
+const MAX_FOTOS = 5;
+function fotosGuardadas(o){ return Array.isArray(o.fotos) ? o.fotos : [o.tiene_foto ? 1 : 0, o.tiene_foto2 ? 2 : 0].filter(Boolean); }
+function claveFoto(o, n){ return o.id + "|" + (o.enviado || "") + "|" + (o.fotos_cambio || "") + "|" + n; }
 function imagen(o, n){
-  if (!(n === 2 ? o.tiene_foto2 : o.tiene_foto)) return h("p", {class:"nota"}, "Sin foto.");
+  if (!fotosGuardadas(o).includes(n)) return h("p", {class:"nota"}, "Sin foto.");
   const k = claveFoto(o, n);
-  if (S.fotos[k]) return h("img", {class:"foto", alt:(n === 2 ? "Segunda foto" : "Foto") + " del trabajo realizado", src:S.fotos[k]});
+  if (S.fotos[k]) return h("img", {class:"foto", alt:"Foto " + n + " del trabajo", src:S.fotos[k]});
   if (S.fotos[k] === "") return h("p", {class:"nota"}, "La foto no se pudo cargar.");
   if (!S.pidiendoFoto[k]){
     S.pidiendoFoto[k] = true;
-    rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n === 2 ? 2 : 1})
+    rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n})
       .then(d => { S.fotos[k] = (typeof d === "string" && d.startsWith("data:image/")) ? d : ""; })
       .catch(() => { S.fotos[k] = ""; })
       .then(() => { delete S.pidiendoFoto[k]; if (!$("v-app").hidden) render(); });
   }
   return h("p", {class:"nota"}, "Cargando foto…");
+}
+function galeria(o){
+  const ns = fotosGuardadas(o);
+  if (!ns.length && o.fotos_borradas)
+    return bloque("Fotos", h("p", {class:"nota"}, "Las fotos se eliminaron el " + fecha(o.fotos_borradas) + " para liberar espacio. Están en el informe descargado de ese período."));
+  return bloque(ns.length > 1 ? "Fotos (" + ns.length + ")" : "Foto",
+    h("div", {class:"fotos"}, ns.length ? ns.map(n => imagen(o, n)) : h("p", {class:"nota"}, "Sin foto.")));
+}
+
+// Editor de fotos: cada elemento de la lista es {n} (foto ya guardada) o {file, vista} (foto nueva elegida en el teléfono).
+// El técnico puede agregar hasta 'max', reemplazar cualquiera o quitarla y elegir otra antes de enviar.
+function listaFotos(o){ return o ? fotosGuardadas(o).map(n => ({n})) : []; }
+function soltarVistas(lista){ for (const it of lista || []) if (it.vista) URL.revokeObjectURL(it.vista); }
+function editorFotos(clave, lista, o, opts, refrescar){
+  const max = opts.max || MAX_FOTOS, bloqueado = !!opts.ocupado;
+  const caja = h("div", {class:"bloque fotos-editor"},
+    h("span", {class:"rot"}, opts.titulo || "Fotos"),
+    h("p", {class:"nota"}, max === 1 ? "Una foto. Puedes reemplazarla o quitarla y elegir otra."
+      : "Hasta " + max + " fotos" + (opts.obligatoria ? "; al menos 1 es obligatoria" : ", todas opcionales") + ". Puedes reemplazar o quitar cualquiera antes de enviar."));
+  const grilla = h("div", {class:"fotos"});
+  lista.forEach((it, i) => {
+    const vista = it.vista ? h("img", {class:"foto", alt:"Foto " + (i+1) + " elegida", src:it.vista}) : imagen(o, it.n);
+    const inp = h("input", {type:"file", accept:"image/*", id:clave + "-r" + i, class:"archivo-oculto", disabled:bloqueado,
+      onchange: ev => {
+        const f = ev.target.files && ev.target.files[0];
+        if (!f) return;
+        if (it.vista) URL.revokeObjectURL(it.vista);
+        lista[i] = {file:f, vista:URL.createObjectURL(f)}; refrescar();
+      }});
+    grilla.append(h("figure", {class:"foto-item"}, vista,
+      h("figcaption", null, "Foto " + (i+1) + (it.file ? " · nueva" : "")),
+      h("div", {class:"acciones"},
+        h("label", {class:"btn", for:inp.id}, "Reemplazar", inp),
+        h("button", {class:"btn peligro", type:"button", id:clave + "-q" + i, disabled:bloqueado,
+          onclick: () => { if (it.vista) URL.revokeObjectURL(it.vista); lista.splice(i, 1); refrescar(); }}, "Quitar"))));
+  });
+  if (lista.length) caja.append(grilla);
+  if (lista.length < max){
+    const inp = h("input", {type:"file", accept:"image/*", id:clave + "-add", multiple: max > 1, disabled:bloqueado,
+      onchange: ev => {
+        for (const f of Array.from(ev.target.files || [])){
+          if (lista.length >= max) break;
+          lista.push({file:f, vista:URL.createObjectURL(f)});
+        }
+        refrescar();
+      }});
+    caja.append(h("label", {for:inp.id}, lista.length ? "Agregar otra foto (" + lista.length + " de " + max + ")"
+      : (opts.obligatoria ? "Agregar foto" : "Agregar foto (opcional)"), inp));
+  } else if (max > 1) caja.append(h("p", {class:"nota"}, "Llegaste al máximo de " + max + " fotos. Quita una para agregar otra."));
+  return caja;
+}
+// Prepara la lista para la base de datos: fotos nuevas reducidas a JPG y {n} para las que se conservan.
+async function fotosParaEnviar(lista){
+  const r = [];
+  for (const it of lista){
+    if (!it.file){ r.push({n:it.n}); continue; }
+    try { r.push(await prepararFoto(it.file)); }
+    catch (e){ throw new Error("No se pudo procesar la foto " + (r.length + 1) + ". Prueba con otra imagen en JPG o PNG."); }
+  }
+  return r;
+}
+// El técnico corrige las fotos de un reporte ya enviado mientras el administrador no lo cierre.
+function corregirFotos(o){
+  const id = o.id, ocupado = !!S.ocupado[id];
+  S.corregir = S.corregir || {};
+  const lista = S.corregir[id];
+  if (!lista) return h("div", {class:"acciones"},
+    h("button", {class:"btn", type:"button", id:"cfo-"+id, onclick: () => { S.corregir[id] = listaFotos(o); render(); }}, "Corregir fotos"),
+    h("span", {class:"nota"}, "Si una foto quedó mal, puedes reemplazarla, quitarla o agregar otra mientras no se cierre."));
+  return h("div", {class:"lista"},
+    editorFotos("cf-"+id, lista, o, {max: esFlujo(o) ? 1 : MAX_FOTOS, obligatoria:true, titulo:"Corregir fotos", ocupado}, render),
+    h("div", {class:"acciones"},
+      h("button", {class:"btn principal", type:"button", id:"cfg-"+id, disabled:ocupado,
+        onclick: async () => {
+          if (!lista.length){ S.errores[id] = "Debe quedar al menos una foto."; render(); return; }
+          S.ocupado[id] = true; delete S.errores[id]; render();
+          try {
+            await rpc("ot_fotos_guardar", {p_token:S.token, p_ot:id, p_fotos: await fotosParaEnviar(lista)});
+            soltarVistas(lista); delete S.corregir[id];
+          } catch (e){ S.errores[id] = e.message; }
+          delete S.ocupado[id];
+          await cargar(); render();
+        }}, ocupado ? "Guardando…" : "Guardar fotos"),
+      h("button", {class:"btn", type:"button", id:"cfc-"+id, disabled:ocupado,
+        onclick: () => { soltarVistas(lista); delete S.corregir[id]; delete S.errores[id]; render(); }}, "Cancelar")));
 }
 
 function tarjeta(o){
@@ -436,9 +524,12 @@ function tarjeta(o){
     cuerpo.append(bloque("Ubicación", h("p", null, o.ubicacion || "—")));
     cuerpo.append(bloque("Descripción del hallazgo", h("p", null, o.detalle)));
     if (o.descripcion_realizada) cuerpo.append(bloque("Qué hizo el técnico", h("p", null, o.descripcion_realizada)));
-    cuerpo.append(bloque(o.tiene_foto2 ? "Fotos" : "Foto", h("div", {class:"fotos"}, imagen(o, 1), o.tiene_foto2 ? imagen(o, 2) : null)));
+    if (!(S.corregir && S.corregir[id])) cuerpo.append(galeria(o));
     cuerpo.append(h("p", {class:"nota"}, "Informado el " + fecha(o.creada) + " por " + o.trabajador + "."));
-    if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Enviado. Falta que el administrador lo revise."));
+    if (!jefe && estado === "revision"){
+      cuerpo.append(h("p", {class:"nota"}, "Enviado. Falta que el administrador lo revise."));
+      cuerpo.append(corregirFotos(o));
+    }
     if (estado === "cerrada")
       cuerpo.append(bloque("Revisión", h("p", null, "Revisado el " + fecha(o.cerrada) + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
     if (S.errores[id]) cuerpo.append(h("p", {class:"mensaje"}, S.errores[id]));
@@ -468,7 +559,7 @@ function tarjeta(o){
       inc || flu ? null : bloque("Código de actividad informado por el técnico", h("p", {class:"cod"}, o.codigo_actividad || "—")),
       flu ? bloque("Lectura del flujómetro", h("p", {class:"cod"}, o.metros_cubicos != null ? m3Txt(o.metros_cubicos) + " m³" : "—"))
           : bloque(inc ? "Cómo se resolvió" : "Trabajo realizado", h("p", null, o.descripcion_realizada || "—")),
-      bloque(o.tiene_foto2 ? "Fotos" : "Foto", h("div", {class:"fotos"}, imagen(o, 1), o.tiene_foto2 ? imagen(o, 2) : null)),
+      S.corregir && S.corregir[id] ? null : galeria(o),
       h("p", {class:"nota"}, (inc ? "Cierre informado el " : "Reporte enviado el ") + fecha(o.enviado))));
   }
   if (jefe && estado === "devuelta") cuerpo.append(h("p", {class:"nota"}, inc ? "Reabierta. Esperando que el técnico la cierre otra vez." : "Esperando que el técnico corrija y reenvíe."));
@@ -488,7 +579,10 @@ function tarjeta(o){
       h("span", {class:"nota"}, "Al aceptarla queda en ejecución y podrás " + (inc ? "cerrarla." : "enviar tu reporte. Tienes " + MAX_EJEC_H + " horas como máximo."))));
   }
   if (editable) cuerpo.append(formReporte(o));
-  if (!jefe && estado === "revision") cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
+  if (!jefe && estado === "revision"){
+    cuerpo.append(h("p", {class:"nota"}, "Reporte enviado. Falta que el administrador cierre la OT."));
+    cuerpo.append(corregirFotos(o));
+  }
   if (estado === "cerrada")
     cuerpo.append(bloque("Cierre", h("p", null, "Cerrada el " + fecha(o.cerrada) + (inc ? " por " + o.trabajador : "") + (o.nota_cierre ? "\n" + o.nota_cierre : ""))));
   if (inc && jefe && estado !== "cerrada"){
@@ -558,10 +652,8 @@ async function moverCola(id, a){
 function formReporte(o){
   const id = o.id, inc = o.tipo === "incidencia";
   if (esFlujo(o)) return formFlujo(o);
-  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", file:null, vista:null, file2:null, vista2:null});
+  const b = S.borradores[id] || (S.borradores[id] = {codigo:o.codigo_actividad||o.actividad||"", descripcion:o.descripcion_realizada||"", fotos:listaFotos(o)});
   const ocupado = !!S.ocupado[id];
-  const prev = b.vista ? h("img", {class:"foto", alt:"Foto seleccionada", src:b.vista}) : o.tiene_foto ? imagen(o, 1) : null;
-  const prev2 = b.vista2 ? h("img", {class:"foto", alt:"Segunda foto seleccionada", src:b.vista2}) : o.tiene_foto2 ? imagen(o, 2) : null;
   const selCod = h("select", {id:"cod-"+id, required:true, onchange: ev => { b.codigo = ev.target.value; }});
   opcionesActividad(selCod, b.codigo);
   return h("form", {class:"lista", onsubmit: ev => { ev.preventDefault(); enviarReporte(o); }},
@@ -570,24 +662,7 @@ function formReporte(o){
     h("label", {for:"des-"+id}, inc ? "Cómo se resolvió" : "Descripción del trabajo realizado",
       h("textarea", {id:"des-"+id, required:true, maxlength:"4000", value:b.descripcion,
         oninput: ev => { b.descripcion = ev.target.value; }})),
-    h("label", {for:"fot-"+id}, prev ? "Cambiar foto" : inc ? "Foto (opcional)" : "Foto del trabajo",
-      h("input", {id:"fot-"+id, type:"file", accept:"image/*",
-        onchange: ev => {
-          const file = ev.target.files && ev.target.files[0];
-          if (!file) return;
-          if (b.vista) URL.revokeObjectURL(b.vista);
-          b.file = file; b.vista = URL.createObjectURL(file); render();
-        }})),
-    prev,
-    h("label", {for:"fo2-"+id}, prev2 ? "Cambiar segunda foto" : "Segunda foto (opcional)",
-      h("input", {id:"fo2-"+id, type:"file", accept:"image/*",
-        onchange: ev => {
-          const file = ev.target.files && ev.target.files[0];
-          if (!file) return;
-          if (b.vista2) URL.revokeObjectURL(b.vista2);
-          b.file2 = file; b.vista2 = URL.createObjectURL(file); render();
-        }})),
-    prev2,
+    editorFotos("fot-"+id, b.fotos, o, {max:MAX_FOTOS, obligatoria:!inc, titulo: inc ? "Fotos (opcionales)" : "Fotos del trabajo", ocupado}, render),
     h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"submit", id:"env-"+id, disabled:ocupado},
         ocupado ? "Enviando…" : inc ? "Cerrar incidencia" : o.enviado ? "Reenviar reporte" : "Enviar reporte")));
@@ -735,17 +810,12 @@ async function enviarReporte(o){
   if (!b || S.ocupado[id]) return;
   if (inc && !b.descripcion.trim()){ S.errores[id] = "Describe cómo se resolvió la incidencia."; render(); return; }
   if (!inc && (!b.codigo.trim() || !b.descripcion.trim())){ S.errores[id] = "Completa el código de actividad y la descripción."; render(); return; }
-  if (!inc && !b.file && !o.tiene_foto){ S.errores[id] = "Agrega una foto del trabajo antes de enviar."; render(); return; }
+  if (!inc && !b.fotos.length){ S.errores[id] = "Agrega al menos una foto del trabajo antes de enviar."; render(); return; }
   S.ocupado[id] = true; delete S.errores[id]; render();
   try {
-    let foto = null, foto2 = null;
-    try {
-      if (b.file) foto = await prepararFoto(b.file);
-      if (b.file2) foto2 = await prepararFoto(b.file2);
-    } catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
-    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_foto:foto, p_foto2:foto2});
-    if (b.vista) URL.revokeObjectURL(b.vista);
-    if (b.vista2) URL.revokeObjectURL(b.vista2);
+    const fotos = await fotosParaEnviar(b.fotos);
+    await rpc("ot_reportar_fotos", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_fotos:fotos});
+    soltarVistas(b.fotos);
     delete S.borradores[id]; delete S.abiertos[id];
   } catch (e){ S.errores[id] = e.message; }
   delete S.ocupado[id];
@@ -758,19 +828,20 @@ async function enviarReporte(o){
   sel.replaceChildren(h("option", {value:""}, "Sin código de actividad"));
   for (const a of ACTIVIDADES) if (a !== FLUJO) sel.append(h("option", {value:a}, a));
 })();
+S.halFotos = [];
+function fotosHal(){ $("h-fotos").replaceChildren(editorFotos("hf", S.halFotos, null, {max:MAX_FOTOS, obligatoria:true, titulo:"Fotos del hallazgo"}, fotosHal)); }
+fotosHal();
 $("form-hal").addEventListener("submit", async ev => {
   ev.preventDefault();
   const est = $("h-estado"), btn = $("h-enviar");
-  const f1 = $("h-foto").files[0], f2 = $("h-foto2").files[0];
-  if (!f1){ est.textContent = "Agrega una foto del hallazgo."; return; }
+  if (!S.halFotos.length){ est.textContent = "Agrega al menos una foto del hallazgo."; return; }
   btn.disabled = true; est.textContent = "Enviando…";
   try {
-    let foto, foto2 = null;
-    try { foto = await prepararFoto(f1); if (f2) foto2 = await prepararFoto(f2); }
-    catch (e){ throw new Error("No se pudo procesar la foto. Prueba con otra imagen en JPG o PNG."); }
-    const n = await rpc("ot_hallazgo_crear", {p_token:S.token, p_titulo:$("h-titulo").value, p_detalle:$("h-desc").value, p_ubicacion:$("h-lugar").value,
-      p_actividad:$("h-act").value, p_realizado:$("h-hecho").value, p_foto:foto, p_foto2:foto2});
+    const fotos = await fotosParaEnviar(S.halFotos);
+    const n = await rpc("ot_hallazgo_enviar", {p_token:S.token, p_titulo:$("h-titulo").value, p_detalle:$("h-desc").value, p_ubicacion:$("h-lugar").value,
+      p_actividad:$("h-act").value, p_realizado:$("h-hecho").value, p_fotos:fotos});
     $("form-hal").reset();
+    soltarVistas(S.halFotos); S.halFotos = []; fotosHal();
     est.textContent = "AH-" + String(n).padStart(4,"0") + " enviado. El administrador lo verá en Por revisar.";
     await cargar();
   } catch (e){ est.textContent = e.message; }
@@ -1077,6 +1148,7 @@ function renderReportes(){
   if (!$("r-mes").value) $("r-mes").value = hoy.slice(0,7);
   const mes = $("r-mes").value || hoy.slice(0,7), caja = $("r-cuerpo"); caja.replaceChildren();
   opcionesInforme(mes);
+  cargarEspacio();
 
   // Alertas: lo que venció sin que el técnico lo realizara (no dependen del mes elegido).
   const alertas = [];
@@ -1212,13 +1284,41 @@ function opcionesInforme(mes){
   sel.value = [...sel.options].some(o => o.value === antes) ? antes : "mes";
 }
 
+/* ---------- espacio de la base de datos ---------- */
+// Se consulta como máximo cada 2 minutos (o al registrar un informe descargado).
+function mbTxt(b){ return (b / 1048576).toLocaleString("es-CL", {maximumFractionDigits: b < 10485760 ? 1 : 0}) + " MB"; }
+async function cargarEspacio(forzar){
+  if (!S.admin) return;
+  if (!forzar && S.espacioHora && Date.now() - S.espacioHora < 120000){ pintarEspacio(); return; }
+  S.espacioHora = Date.now();
+  try { S.espacio = await rpc("ot_espacio", {p_token:S.token}); } catch (e){ S.espacio = {error:e.message}; }
+  pintarEspacio();
+}
+function pintarEspacio(){
+  const caja = $("espacio"), d = S.espacio;
+  if (!caja || !d) return;
+  if (d.error){ caja.replaceChildren(h("p", {class:"nota"}, "No se pudo consultar el espacio: " + d.error)); return; }
+  const p = Math.min(100, Math.round(100 * d.usado / d.limite)), nivel = p >= 85 ? "alto" : p >= 65 ? "medio" : "bajo";
+  caja.replaceChildren(
+    h("div", {class:"espacio-cab"}, h("b", null, "Espacio de la base de datos"), h("span", {class:"espacio-pct " + nivel}, p + " %")),
+    h("div", {class:"espacio-barra", role:"progressbar", "aria-valuemin":"0", "aria-valuemax":"100", "aria-valuenow":String(p), "aria-label":"Espacio usado"},
+      h("span", {class:nivel, style:"width:" + Math.max(p, 1) + "%"})),
+    h("p", {class:"nota"}, mbTxt(d.usado) + " usados de " + mbTxt(d.limite) + " del plan gratuito. Fotos guardadas: " + d.fotos +
+      " (" + mbTxt(d.bytes_fotos) + ")" + (d.borradas ? "; " + d.borradas + " trabajos antiguos ya liberaron sus fotos." : ".")),
+    h("p", {class:"nota"}, "Las fotos de los trabajos cerrados hace más de " + d.semanas + " semanas se eliminan solas, solo si ya están en un informe que abriste o descargaste. El texto de los trabajos se guarda siempre." +
+      (d.ultimo_informe ? " Último informe registrado: " + fecha(d.ultimo_informe) + "." : " Aún no hay informes registrados.")),
+    d.sin_respaldo ? h("p", {class:"devol"}, d.sin_respaldo + (d.sin_respaldo === 1 ? " trabajo cerrado" : " trabajos cerrados") + " hace más de " + d.semanas +
+      " semanas aún " + (d.sin_respaldo === 1 ? "tiene" : "tienen") + " fotos que no están en ningún informe descargado (desde el " + fechaCorta(d.sin_respaldo_desde) +
+      "). Genera y descarga el informe semanal de esas semanas para que se liberen.") : null);
+}
+
 /* ---------- informe semanal o mensual con fotos ---------- */
 function esc(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function aDataUrl(blob){ return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(blob); }); }
 async function fotoDe(o, n){
   const k = claveFoto(o, n);
   if (S.fotos[k]) return S.fotos[k];
-  try { const d = await rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n === 2 ? 2 : 1}); if (typeof d === "string" && d.startsWith("data:image/")) return d; } catch (e){}
+  try { const d = await rpc("ot_foto", {p_token:S.token, p_ot:o.id, p_n:n}); if (typeof d === "string" && d.startsWith("data:image/")) return d; } catch (e){}
   return "";
 }
 let urlInforme = null;
@@ -1237,7 +1337,7 @@ async function generarInforme(){
   btn.disabled = true;
   try {
     // Fotos: de a cuatro a la vez, mostrando el avance.
-    const conFoto = trabajos.concat(hals).flatMap(o => [o.tiene_foto ? [o, 1] : null, o.tiene_foto2 ? [o, 2] : null].filter(Boolean)), fotos = {};
+    const conFoto = trabajos.concat(hals).flatMap(o => fotosGuardadas(o).map(n => [o, n])), fotos = {};
     let listas = 0, sig = 0;
     const obrero = async () => { while (sig < conFoto.length){ const [o, n] = conFoto[sig++]; fotos[o.id + "|" + n] = await fotoDe(o, n); listas++; est.textContent = "Cargando fotos: " + listas + " de " + conFoto.length + "…"; } };
     est.textContent = conFoto.length ? "Cargando fotos: 0 de " + conFoto.length + "…" : "Armando el informe…";
@@ -1249,9 +1349,15 @@ async function generarInforme(){
     const tecnicos = [...new Set(trabajos.concat(hals).map(o => o.trabajador))].sort();
     const numero = codigo;
     const estadoTxt = o => hecha(o) ? (o.estado === "cerrada" ? "Cerrada" : "Realizada, por revisar") : o.estado === "ejecucion" ? "En ejecución" : (o.tipo === "incidencia" ? "Abierta" : "No realizada");
+    const fotosInforme = (o, de) => {
+      const ns = fotosGuardadas(o);
+      if (!ns.length) return '<p class="sin">' + (o.fotos_borradas ? "Fotos eliminadas el " + esc(fechaCorta(isoLocal(o.fotos_borradas))) + " para liberar espacio; están en un informe anterior." : "Sin foto.") + "</p>";
+      return ns.map((n, i) => fotos[o.id + "|" + n] ? '<img src="' + fotos[o.id + "|" + n] + '" alt="Foto ' + (i+1) + " " + de + " " + esc(numero(o)) + '">'
+        : '<p class="sin">La foto ' + (i+1) + " no se pudo cargar.</p>").join("");
+    };
     const fila = (r, v) => v ? "<tr><th>" + esc(r) + "</th><td>" + esc(v) + "</td></tr>" : "";
     const bloques = trabajos.map(o => {
-      const inc = o.tipo === "incidencia", f = fotos[o.id + "|1"], f2 = fotos[o.id + "|2"];
+      const inc = o.tipo === "incidencia";
       return '<section class="trabajo"><h3>' + esc(numero(o)) + " · " + esc(inc ? "Incidencia fuera de horario" : (o.actividad || o.titulo)) + ' <span class="est' + (hecha(o) ? "" : " no") + '">' + esc(estadoTxt(o)) + "</span></h3><table>" +
         fila("Técnico", o.trabajador) + fila(inc ? "Informada por" : "", inc ? o.creada_por : "") + fila("Trabajo", inc ? "" : o.titulo) +
         fila(inc ? "Informada el" : "Asignada el", fecha(o.creada)) + fila("Aceptada el", o.aceptada ? fecha(o.aceptada) : "") + fila("Fecha programada", o.fecha_limite ? fechaCorta(o.fecha_limite) : "") +
@@ -1259,17 +1365,14 @@ async function generarInforme(){
         fila("Ubicación", o.ubicacion) + fila(inc ? "Qué pasó" : "Detalle", o.detalle) +
         fila("Código informado", inc ? "" : o.codigo_actividad) + fila("Metros cúbicos", o.metros_cubicos != null ? m3Txt(o.metros_cubicos) + " m³" : "") + fila(inc ? "Cómo se resolvió" : "Trabajo realizado", o.descripcion_realizada) +
         fila(inc ? "Cerrada el" : "Reporte enviado el", o.enviado ? fecha(o.enviado) : "") + fila(inc ? "" : "Cerrada el", !inc && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de cierre", o.nota_cierre) +
-        "</table>" + (f ? '<img src="' + f + '" alt="Foto del trabajo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
-        (f2 ? '<img src="' + f2 + '" alt="Segunda foto del trabajo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
+        "</table>" + fotosInforme(o, "del trabajo") + "</section>";
     }).join("");
     const bloquesHal = hals.map(o => {
-      const f = fotos[o.id + "|1"], f2 = fotos[o.id + "|2"];
       return '<section class="trabajo hal"><h3>' + esc(numero(o)) + " · Autohallazgo" + ' <span class="est' + (o.estado === "cerrada" ? "" : " pend") + '">' + (o.estado === "cerrada" ? "Revisado" : "Por revisar") + "</span></h3><table>" +
         fila("Técnico", o.trabajador) + fila("Informado el", fecha(o.creada)) + fila("Hallazgo", o.titulo) + fila("Ubicación", o.ubicacion) +
         fila("Código de actividad", o.actividad) + fila("Descripción", o.detalle) + fila("Qué hizo el técnico", o.descripcion_realizada) +
         fila("Revisado el", o.estado === "cerrada" && o.cerrada ? fecha(o.cerrada) : "") + fila("Nota de revisión", o.nota_cierre) + "</table>" +
-        (f ? '<img src="' + f + '" alt="Foto del autohallazgo ' + esc(numero(o)) + '">' : '<p class="sin">' + (o.tiene_foto ? "La foto no se pudo cargar." : "Sin foto.") + "</p>") +
-        (f2 ? '<img src="' + f2 + '" alt="Segunda foto del autohallazgo ' + esc(numero(o)) + '">' : o.tiene_foto2 ? '<p class="sin">La segunda foto no se pudo cargar.</p>' : "") + "</section>";
+        fotosInforme(o, "del autohallazgo") + "</section>";
     }).join("");
     const resumen = tecnicos.map(t => {
       const m = ots.filter(o => o.trabajador === t), mi = incs.filter(o => o.trabajador === t);
@@ -1297,8 +1400,17 @@ async function generarInforme(){
     urlInforme = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
     const sinFoto = conFoto.filter(([o, n]) => !fotos[o.id + "|" + n]).length;
     est.textContent = "Informe listo: " + trabajos.length + " trabajos, " + hals.length + " autohallazgos, " + (conFoto.length - sinFoto) + " fotos." + (sinFoto ? " " + sinFoto + " fotos no se pudieron cargar." : "");
-    enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener"}, "Abrir informe"),
-      h("a", {class:"btn", href:urlInforme, download:(semanal ? "Informe_semana_" + semanaIso(desde) + "_" + desde : "Informe_mensual_" + mes) + ".html"}, "Descargar archivo"));
+    // Al abrir o descargar un informe completo queda anotado: así las fotos antiguas de ese período se pueden liberar.
+    let registrado = false;
+    const registrar = () => {
+      if (registrado || sinFoto) return;
+      registrado = true;
+      rpc("ot_informe_registrar", {p_token:S.token, p_desde:desde, p_hasta:hasta, p_fotos:conFoto.length})
+        .then(() => cargarEspacio(true)).catch(() => { registrado = false; });
+    };
+    if (sinFoto) est.textContent += " Como faltan fotos, este informe no cuenta como respaldo: vuelve a generarlo.";
+    enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener", onclick:registrar}, "Abrir informe"),
+      h("a", {class:"btn", onclick:registrar, href:urlInforme, download:(semanal ? "Informe_semana_" + semanaIso(desde) + "_" + desde : "Informe_mensual_" + mes) + ".html"}, "Descargar archivo"));
   } catch (e){ est.textContent = "No se pudo armar el informe. " + (e && e.message ? e.message : ""); }
   btn.disabled = false;
 }
