@@ -453,6 +453,7 @@ function tarjeta(o){
     cuerpo.append(h("p", {class: nivel ? "devol" : "nota"}, (nivel === 2 ? "Plazo vencido: había que cerrarla antes del " : "Plazo de " + PLAZO_INC_H + " horas: hay que cerrarla antes del ") + fecha(plazoInc(o)) + "."));
   if (inc && estado === "cerrada" && o.cerrada)
     cuerpo.append(h("p", {class:"nota"}, new Date(o.cerrada) <= plazoInc(o) ? "Cerrada dentro del plazo de " + PLAZO_INC_H + " horas." : "Cerrada fuera del plazo de " + PLAZO_INC_H + " horas."));
+  if (o.nota_reasignacion) cuerpo.append(h("p", {class:"nota"}, o.nota_reasignacion));
   if (estado === "devuelta" && o.nota_devolucion)
     cuerpo.append(h("div", {class:"devol"}, h("b", null, "Devuelta por el administrador: "), o.nota_devolucion));
   if (!inc && estado === "ejecucion" && o.aceptada)
@@ -651,8 +652,10 @@ function accionesAdmin(o){
       h("textarea", {id:"nota-"+id, maxlength:"1000", value:S.notas[id]||"", style:"min-height:60px",
         oninput: ev => { S.notas[id] = ev.target.value; }})));
   }
-  if (estado === "asignada" && esOT(o)){
-    // Mover la OT a otro técnico mientras nadie la haya aceptado: entra al final de su cola.
+  const incAbierta = o.tipo === "incidencia" && estado !== "cerrada";
+  if ((estado === "asignada" && esOT(o)) || incAbierta){
+    // OT: se mueve mientras nadie la acepte y entra al final de la cola del nuevo técnico.
+    // Incidencia: se reasigna mientras no esté cerrada y queda abierta para que el nuevo técnico la acepte.
     const otros = S.trabajadores.filter(t => t.rol === "trabajador" && t.activo && t.id !== o.trabajador_id);
     if (otros.length){
       S.mover = S.mover || {};
@@ -660,11 +663,15 @@ function accionesAdmin(o){
       const sel = h("select", {id:"mov-"+id, onchange: ev => { S.mover[id] = ev.target.value; render(); }},
         h("option", {value:""}, "Elige otro técnico"), otros.map(t => h("option", {value:t.id}, t.nombre)));
       sel.value = S.mover[id];
-      caja.append(h("label", {for:"mov-"+id}, "Mover esta OT a otro técnico", sel),
+      caja.append(h("label", {for:"mov-"+id}, incAbierta ? "Reasignar esta incidencia a otro técnico" : "Mover esta OT a otro técnico", sel),
         h("div", {class:"acciones"},
           h("button", {class:"btn", type:"button", id:"movb-"+id, disabled: ocupado || !S.mover[id],
-            onclick: () => accion(id, "ot_reasignar", {p_ot:id, p_trabajador:S.mover[id]}, () => { delete S.mover[id]; })}, ocupado ? "Moviendo…" : "Mover OT"),
-          h("span", {class:"nota"}, "Queda al final de la cola del técnico elegido.")));
+            onclick: () => accion(id, "ot_reasignar", {p_ot:id, p_trabajador:S.mover[id]}, () => { delete S.mover[id]; })},
+            ocupado ? (incAbierta ? "Reasignando…" : "Moviendo…") : (incAbierta ? "Reasignar incidencia" : "Mover OT")),
+          h("span", {class:"nota"}, incAbierta
+            ? (estado === "asignada" ? "El técnico elegido la recibe abierta para aceptarla. Avísale por WhatsApp después."
+              : "Vuelve a quedar abierta: el técnico elegido debe aceptarla. " + o.trabajador + " deja de verla. Avísale por WhatsApp después.")
+            : "Queda al final de la cola del técnico elegido.")));
     }
   }
   const fila = h("div", {class:"acciones"});
