@@ -4,7 +4,8 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 
 - El administrador crea la OT y la asigna a un técnico.
 - El técnico ve solo sus OT y las acepta con el botón **Aceptar OT**: desde ese momento la OT queda **En ejecución**.
-- Al terminar, escribe el código de actividad y la descripción del trabajo realizado, y sube una foto (puede agregar una segunda).
+- Al terminar, escribe el código de actividad y la descripción del trabajo realizado, y sube sus fotos: hasta 5, con 1 obligatoria.
+- Antes de enviar puede **Reemplazar** o **Quitar** cualquier foto y elegir otra. Si ya envió el reporte y la OT aún no se cierra, puede usar **Corregir fotos** para cambiarlas.
 - El administrador revisa el reporte y cierra la OT, o la devuelve con una nota.
 
 ## Buscador
@@ -24,7 +25,7 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 
 ## Autohallazgos
 
-- El técnico informa lo que encuentra en terreno desde **Informar un autohallazgo**: qué encontró, dónde, descripción, foto (obligatoria, más una segunda opcional), y opcionalmente el código de actividad y lo que hizo.
+- El técnico informa lo que encuentra en terreno desde **Informar un autohallazgo**: qué encontró, dónde, descripción, fotos (hasta 5, con 1 obligatoria), y opcionalmente el código de actividad y lo que hizo. Mientras no esté revisado puede corregir las fotos.
 - No lleva número de OT ni de incidencia: tiene su propia numeración, **AH-0001**, AH-0002…
 - Llega al administrador como **Por revisar**. El administrador lo marca como revisado (con una nota opcional) o lo elimina. No se devuelve al técnico.
 - El filtro **Autohallazgos** de la lista los muestra todos. El Panel muestra cuántos hubo en el mes y cuántos informó cada técnico.
@@ -57,7 +58,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - El centro de control solo puede crear incidencias fuera del horario laboral (lunes a jueves de 8:30 a 18:30, viernes de 8:30 a 14:30, hora de Chile). Los feriados cuentan completos como fuera de horario: vienen cargados los que quedan de 2026 y el administrador agrega los siguientes en la sección **Feriados**.
 - Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.
-- El técnico de turno la acepta (queda En ejecución) y luego la cierra describiendo cómo se resolvió (hasta dos fotos, opcionales). El centro de control y el administrador ven ese cierre.
+- El técnico de turno la acepta (queda En ejecución) y luego la cierra describiendo cómo se resolvió (hasta 5 fotos, opcionales). El centro de control y el administrador ven ese cierre.
 - El administrador puede **reasignar** una incidencia a otro técnico mientras no esté cerrada (abierta, en ejecución o reabierta), desde la misma incidencia. Vuelve a quedar abierta para que el nuevo técnico la acepte, el anterior deja de verla y el plazo de 24 horas sigue contando desde que se informó. Queda anotado quién la tenía y cuándo se cambió. Después hay que avisar al nuevo técnico con el botón de WhatsApp.
 
 ## Ronda de luminarias
@@ -109,6 +110,6 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 ## Notas
 
-- Las fotos se guardan reducidas dentro de la base de datos. El plan gratuito de Supabase alcanza para unas 1.500 fotos (cada OT puede llevar dos); después hay que eliminar OT antiguas o pasar a un plan pagado.
+- Las fotos se guardan reducidas dentro de la base de datos. El plan gratuito de Supabase alcanza para unas 1.500 fotos en total (cada trabajo puede llevar hasta 5); después hay que eliminar OT antiguas o pasar a un plan pagado. El flujómetro sigue llevando una sola foto.
 - La página se actualiza sola cada 30 segundos. No envía avisos por correo ni al teléfono.
 - Nunca pongas en `config.js` la clave `secret` o `service_role` de Supabase: solo la `publishable`.

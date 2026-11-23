@@ -62,7 +62,12 @@ alter table public.ordenes add column if not exists origen text not null default
 alter table public.ordenes add column if not exists aceptada timestamptz; -- momento en que el técnico aceptó la orden y la puso en ejecución
 alter table public.ordenes add column if not exists foto2 text; -- segunda foto del cierre (opcional)
 alter table public.ordenes add column if not exists metros_cubicos numeric; -- lectura informada en las OT de Flujómetro
-alter table public.ordenes add column if not exists nota_reasignacion text; -- historial de cambios de técnico hechos por el administrador
+alter table public.ordenes add column if not exists nota_reasignacion text;
+-- Hasta 5 fotos por trabajo (foto, foto2 … foto5). 'fotos_cambio' marca cuándo el técnico corrigió sus fotos después de enviar.
+alter table public.ordenes add column if not exists foto3 text;
+alter table public.ordenes add column if not exists foto4 text;
+alter table public.ordenes add column if not exists foto5 text;
+alter table public.ordenes add column if not exists fotos_cambio timestamptz; -- historial de cambios de técnico hechos por el administrador
 -- Estados: asignada -> ejecucion (el técnico la acepta) -> revision (envió su reporte) -> cerrada; devuelta = el administrador pidió corregir.
 alter table public.ordenes drop constraint if exists ordenes_estado_check;
 alter table public.ordenes add constraint ordenes_estado_check check (estado in ('asignada','ejecucion','revision','devuelta','cerrada'));
@@ -893,7 +898,9 @@ begin
       'actividad', o.actividad, 'cantidad', o.cantidad, 'unidad', o.unidad, 'origen', o.origen, 'titulo', o.titulo, 'detalle', o.detalle, 'ubicacion', o.ubicacion, 'prioridad', o.prioridad,
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada, 'orden_cola', o.orden_cola, 'medidor', o.medidor,
       'codigo_actividad', o.codigo_actividad, 'metros_cubicos', o.metros_cubicos, 'descripcion_realizada', o.descripcion_realizada,
-      'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado,
+      'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado, 'fotos_cambio', o.fotos_cambio,
+      'fotos', to_jsonb(array_remove(array[case when o.foto is not null then 1 end, case when o.foto2 is not null then 2 end,
+        case when o.foto3 is not null then 3 end, case when o.foto4 is not null then 4 end, case when o.foto5 is not null then 5 end], null)),
       'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada, 'nota_reasignacion', o.nota_reasignacion)
     order by o.creada desc), '[]'::jsonb)
     into ords
@@ -938,7 +945,7 @@ language plpgsql security definer set search_path = public, extensions as $$
 declare u public.usuarios; f text;
 begin
   u := public.ot_quien(p_token);
-  select case when p_n = 2 then foto2 else foto end into f from public.ordenes
+  select case p_n when 2 then foto2 when 3 then foto3 when 4 then foto4 when 5 then foto5 else foto end into f from public.ordenes
    where id = p_ot and (u.rol = 'admin' or trabajador_id = u.id or (u.rol = 'control' and tipo = 'incidencia'));
   return f;
 end $$;
@@ -1041,43 +1048,94 @@ begin
   update public.ordenes x set orden_cola = t.n from unnest(ids) with ordinality as t(id, n) where x.id = t.id;
 end $$;
 
+-- Arma la lista final de fotos (hasta 5) a partir de lo que manda la página: cada elemento es una foto nueva
+-- ("data:image/jpeg;base64,…") o {"n": k} para conservar la foto k que ya estaba guardada. Así el técnico puede
+-- reemplazar, quitar o agregar fotos sin volver a subir las que no cambia. Las fotos quedan juntas desde la 1.
+create or replace function public.ot_armar_fotos(o public.ordenes, p_fotos jsonb) returns text[]
+language plpgsql stable set search_path = public, extensions as $$
+declare r text[] := '{}'; e jsonb; viejas text[] := array[o.foto, o.foto2, o.foto3, o.foto4, o.foto5]; f text; k int;
+begin
+  if p_fotos is null or jsonb_typeof(p_fotos) <> 'array' then raise exception 'La lista de fotos no es válida.'; end if;
+  if jsonb_array_length(p_fotos) > 5 then raise exception 'Puedes subir hasta 5 fotos.'; end if;
+  for e in select value from jsonb_array_elements(p_fotos) loop
+    if jsonb_typeof(e) = 'object' then
+      k := case when (e->>'n') ~ '^[1-5]$' then (e->>'n')::int end;
+      if k is null or viejas[k] is null then raise exception 'Una de las fotos guardadas ya no existe. Recarga la página.'; end if;
+      f := viejas[k];
+    elsif jsonb_typeof(e) = 'string' then
+      f := e #>> '{}';
+      if f !~ '^data:image/jpeg;base64,' or length(f) > 700000 then raise exception 'La foto no es válida o es demasiado grande.'; end if;
+    else
+      raise exception 'La lista de fotos no es válida.';
+    end if;
+    r := r || f;
+  end loop;
+  return r;
+end $$;
+
 drop function if exists public.ot_reportar(text, uuid, text, text, text);
 drop function if exists public.ot_reportar(text, uuid, text, text, text, text);
-create or replace function public.ot_reportar(p_token text, p_ot uuid, p_codigo text, p_descripcion text, p_foto text, p_foto2 text default null, p_m3 numeric default null) returns void
+drop function if exists public.ot_reportar(text, uuid, text, text, text, text, numeric);
+-- p_fotos (lista de hasta 5) reemplaza a p_foto/p_foto2; estos se mantienen para páginas antiguas abiertas.
+create or replace function public.ot_reportar(p_token text, p_ot uuid, p_codigo text, p_descripcion text, p_foto text default null,
+  p_foto2 text default null, p_m3 numeric default null, p_fotos jsonb default null) returns void
 language plpgsql security definer set search_path = public, extensions as $$
-declare u public.usuarios; o public.ordenes;
+declare u public.usuarios; o public.ordenes; fs text[];
 begin
   u := public.ot_quien(p_token);
-  select * into o from public.ordenes where id = p_ot and trabajador_id = u.id;
+  select * into o from public.ordenes where id = p_ot and trabajador_id = u.id for update;
   if not found then raise exception 'Esta orden no está asignada a ti.'; end if;
   if o.estado = 'asignada' then raise exception 'Primero acepta la orden para ponerla en ejecución.'; end if;
   if o.estado not in ('ejecucion','devuelta') then raise exception 'Esta orden ya fue enviada o cerrada.'; end if;
-  if (p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000))
-     or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
-    raise exception 'La foto no es válida o es demasiado grande.';
+  if p_fotos is not null then
+    fs := public.ot_armar_fotos(o, p_fotos);
+  else
+    if (p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000))
+       or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
+      raise exception 'La foto no es válida o es demasiado grande.';
+    end if;
+    fs := array[coalesce(p_foto, o.foto), coalesce(p_foto2, o.foto2), o.foto3, o.foto4, o.foto5];
   end if;
   if o.tipo = 'incidencia' then
     -- Una incidencia no lleva código de actividad ni exige foto: el reporte del técnico la cierra.
     if length(trim(coalesce(p_descripcion,''))) = 0 then raise exception 'Describe cómo se resolvió la incidencia.'; end if;
-    update public.ordenes set descripcion_realizada = trim(p_descripcion), foto = coalesce(p_foto, foto), foto2 = coalesce(p_foto2, foto2),
+    update public.ordenes set descripcion_realizada = trim(p_descripcion), foto = fs[1], foto2 = fs[2], foto3 = fs[3], foto4 = fs[4], foto5 = fs[5],
       enviado = now(), estado = 'cerrada', cerrada = now(), nota_cierre = null where id = p_ot;
     return;
+  end if;
+  if cardinality(array_remove(fs, null)) = 0 then
+    raise exception '%', case when o.actividad = 'Flujómetro' then 'Agrega la foto del flujómetro antes de enviar.' else 'Agrega una foto del trabajo antes de enviar.' end;
   end if;
   if o.actividad = 'Flujómetro' then
     -- El flujómetro solo lleva una foto del medidor y los metros cúbicos.
     if p_m3 is null or p_m3 < 0 then raise exception 'Escribe los metros cúbicos que marca el flujómetro.'; end if;
-    if p_foto is null and o.foto is null then raise exception 'Agrega la foto del flujómetro antes de enviar.'; end if;
     update public.ordenes set codigo_actividad = 'Flujómetro', metros_cubicos = p_m3,
       descripcion_realizada = 'Lectura de flujómetro: ' || replace(trim(trailing '.' from trim(trailing '0' from to_char(p_m3, 'FM999999999990.000'))), '.', ',') || ' m³',
-      foto = coalesce(p_foto, foto), enviado = now(), estado = 'revision' where id = p_ot;
+      foto = fs[1], foto2 = null, foto3 = null, foto4 = null, foto5 = null, enviado = now(), estado = 'revision' where id = p_ot;
     return;
   end if;
   if length(trim(coalesce(p_codigo,''))) = 0 or length(trim(coalesce(p_descripcion,''))) = 0 then
     raise exception 'Completa el código de actividad y la descripción.';
   end if;
-  if p_foto is null and o.foto is null then raise exception 'Agrega una foto del trabajo antes de enviar.'; end if;
   update public.ordenes set codigo_actividad = trim(p_codigo), descripcion_realizada = trim(p_descripcion),
-    foto = coalesce(p_foto, foto), foto2 = coalesce(p_foto2, foto2), enviado = now(), estado = 'revision' where id = p_ot;
+    foto = fs[1], foto2 = fs[2], foto3 = fs[3], foto4 = fs[4], foto5 = fs[5], enviado = now(), estado = 'revision' where id = p_ot;
+end $$;
+
+-- El técnico corrige las fotos (reemplaza, quita o agrega) de una OT o autohallazgo ya enviado, mientras el administrador no lo cierre.
+create or replace function public.ot_fotos_guardar(p_token text, p_ot uuid, p_fotos jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare u public.usuarios; o public.ordenes; fs text[];
+begin
+  u := public.ot_quien(p_token);
+  select * into o from public.ordenes where id = p_ot and trabajador_id = u.id for update;
+  if not found then raise exception 'Esta orden no está asignada a ti.'; end if;
+  if o.tipo not in ('ot','hallazgo') or o.estado <> 'revision' then
+    raise exception 'Solo puedes corregir las fotos de un reporte enviado que aún no se cierra.';
+  end if;
+  fs := public.ot_armar_fotos(o, p_fotos);
+  if cardinality(fs) = 0 then raise exception 'Debe quedar al menos una foto.'; end if;
+  if o.actividad = 'Flujómetro' and cardinality(fs) > 1 then raise exception 'El flujómetro lleva una sola foto.'; end if;
+  update public.ordenes set foto = fs[1], foto2 = fs[2], foto3 = fs[3], foto4 = fs[4], foto5 = fs[5], fotos_cambio = now() where id = p_ot;
 end $$;
 
 create or replace function public.ot_cerrar(p_token text, p_ot uuid, p_nota text) returns void
@@ -1156,33 +1214,39 @@ end $$;
 -- El técnico informa algo que encontró en terreno. No es OT ni incidencia: lleva su propia numeración (AH-0001)
 -- y queda "por revisar" hasta que el administrador lo marca como revisado.
 create sequence if not exists public.ordenes_hallazgo_seq;
+drop function if exists public.ot_hallazgo_crear(text, text, text, text, text, text, text, text);
 create or replace function public.ot_hallazgo_crear(p_token text, p_titulo text, p_detalle text, p_ubicacion text,
-  p_actividad text, p_realizado text, p_foto text, p_foto2 text default null) returns int
+  p_actividad text, p_realizado text, p_foto text default null, p_foto2 text default null, p_fotos jsonb default null) returns int
 language plpgsql security definer set search_path = public, extensions as $$
-declare u public.usuarios; n int;
+declare u public.usuarios; n int; fs text[]; vacia public.ordenes;
 begin
   u := public.ot_quien(p_token);
   if u.rol <> 'trabajador' then raise exception 'Solo los técnicos informan autohallazgos.'; end if;
   if length(trim(coalesce(p_titulo,''))) = 0 then raise exception 'Escribe qué encontraste.'; end if;
   if length(trim(coalesce(p_ubicacion,''))) = 0 then raise exception 'Escribe dónde lo encontraste.'; end if;
   if length(trim(coalesce(p_detalle,''))) = 0 then raise exception 'Describe el hallazgo.'; end if;
-  if p_foto is null then raise exception 'Agrega una foto del hallazgo.'; end if;
-  if (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000)
-     or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
-    raise exception 'La foto no es válida o es demasiado grande.';
+  if p_fotos is not null then
+    fs := public.ot_armar_fotos(vacia, p_fotos);
+  else
+    if (p_foto is not null and (p_foto !~ '^data:image/jpeg;base64,' or length(p_foto) > 700000))
+       or (p_foto2 is not null and (p_foto2 !~ '^data:image/jpeg;base64,' or length(p_foto2) > 700000)) then
+      raise exception 'La foto no es válida o es demasiado grande.';
+    end if;
+    fs := array_remove(array[p_foto, p_foto2], null);
   end if;
+  if cardinality(fs) = 0 then raise exception 'Agrega una foto del hallazgo.'; end if;
   n := nextval('public.ordenes_hallazgo_seq');
   insert into public.ordenes(numero, tipo, origen, trabajador_id, creada_por, titulo, detalle, ubicacion, actividad, codigo_actividad,
-                             descripcion_realizada, foto, foto2, estado, enviado)
+                             descripcion_realizada, foto, foto2, foto3, foto4, foto5, estado, enviado)
   values (n, 'hallazgo', 'hallazgo', u.id, u.id, left(trim(p_titulo), 120), left(trim(p_detalle), 4000), left(trim(p_ubicacion), 120),
           nullif(trim(coalesce(p_actividad,'')), ''), nullif(trim(coalesce(p_actividad,'')), ''),
-          nullif(left(trim(coalesce(p_realizado,'')), 4000), ''), p_foto, p_foto2, 'revision', now());
+          nullif(left(trim(coalesce(p_realizado,'')), 4000), ''), fs[1], fs[2], fs[3], fs[4], fs[5], 'revision', now());
   return n;
 end $$;
 
 -- ---------- permisos de las funciones ----------
 do $$
-declare f record; internas text[] := array['ot_medidor_nombre','ot_cola_nueva','ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
+declare f record; internas text[] := array['ot_armar_fotos','ot_medidor_nombre','ot_cola_nueva','ot_sesion','ot_quien','ot_admin','ot_abrir_sesion','ot_validar','ot_generar_plan','ot_generar_rondas','ot_generar_flujometros','ot_generar_horas_turno','ot_periodo_inicio','ot_turno_inicio','ot_turno_de','ot_turno_actual'];
 begin
   for f in select p.oid::regprocedure as firma, p.proname from pg_proc p
             join pg_namespace n on n.oid = p.pronamespace

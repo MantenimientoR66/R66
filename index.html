@@ -100,6 +100,12 @@ button.btn:disabled{opacity:.55;cursor:default}
 .cod{font-weight:600;font-variant-numeric:tabular-nums}
 .fotos{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
 .fotos .foto{max-width:min(100%,420px)}
+.foto-item{margin:0;display:flex;flex-direction:column;gap:6px;max-width:min(100%,260px)}
+.foto-item .foto{max-height:220px}
+.foto-item figcaption{font-size:.85rem;color:var(--tenue)}
+.foto-item .acciones{gap:6px}
+.foto-item .btn{padding:6px 10px;font-size:.9rem;cursor:pointer}
+.archivo-oculto{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none}
 .foto{max-width:100%;max-height:420px;border-radius:4px;border:1px solid var(--linea);display:block}
 .devol{border-left:4px solid var(--alerta);padding:6px 10px;background:var(--campo)}
 .equipo-fila{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
@@ -114,7 +120,7 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .trab-cab{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:space-between;align-items:baseline}
 .trab-cab b{overflow-wrap:anywhere}
 .usr{font-variant-numeric:tabular-nums;color:var(--tenue)}
-a.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
+a.btn,label.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
 a.btn.wa{background:var(--boton);border-color:var(--boton);color:var(--boton-tinta)}
 .nav{display:flex;flex-wrap:wrap;gap:6px;border-bottom:2px solid var(--linea);padding-bottom:8px}
 .nav button{font:600 1rem var(--cuerpo);color:var(--tenue);background:none;border:0;border-radius:4px;padding:8px 14px;cursor:pointer}
@@ -313,14 +319,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
           <label for="h-hecho">Qué hiciste (opcional)
             <textarea id="h-hecho" maxlength="4000" style="min-height:60px" placeholder="Si lo reparaste, señalizaste o avisaste a alguien."></textarea>
           </label>
-          <div class="fila">
-            <label for="h-foto">Foto del hallazgo
-              <input id="h-foto" type="file" accept="image/*" required>
-            </label>
-            <label for="h-foto2">Segunda foto (opcional)
-              <input id="h-foto2" type="file" accept="image/*">
-            </label>
-          </div>
+          <div id="h-fotos"></div>
           <div class="acciones">
             <button class="btn principal" id="h-enviar" type="submit">Enviar autohallazgo</button>
             <span class="nota" id="h-estado" role="status"></span>
