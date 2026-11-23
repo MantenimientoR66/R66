@@ -400,6 +400,8 @@ function imagen(o, n){
 }
 function galeria(o){
   const ns = fotosGuardadas(o);
+  if (!ns.length && o.fotos_borradas)
+    return bloque("Fotos", h("p", {class:"nota"}, "Las fotos se eliminaron el " + fecha(o.fotos_borradas) + " para liberar espacio. Están en el informe descargado de ese período."));
   return bloque(ns.length > 1 ? "Fotos (" + ns.length + ")" : "Foto",
     h("div", {class:"fotos"}, ns.length ? ns.map(n => imagen(o, n)) : h("p", {class:"nota"}, "Sin foto.")));
 }
@@ -812,7 +814,7 @@ async function enviarReporte(o){
   S.ocupado[id] = true; delete S.errores[id]; render();
   try {
     const fotos = await fotosParaEnviar(b.fotos);
-    await rpc("ot_reportar", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_fotos:fotos});
+    await rpc("ot_reportar_fotos", {p_token:S.token, p_ot:id, p_codigo:inc ? null : b.codigo, p_descripcion:b.descripcion, p_fotos:fotos});
     soltarVistas(b.fotos);
     delete S.borradores[id]; delete S.abiertos[id];
   } catch (e){ S.errores[id] = e.message; }
@@ -836,7 +838,7 @@ $("form-hal").addEventListener("submit", async ev => {
   btn.disabled = true; est.textContent = "Enviando…";
   try {
     const fotos = await fotosParaEnviar(S.halFotos);
-    const n = await rpc("ot_hallazgo_crear", {p_token:S.token, p_titulo:$("h-titulo").value, p_detalle:$("h-desc").value, p_ubicacion:$("h-lugar").value,
+    const n = await rpc("ot_hallazgo_enviar", {p_token:S.token, p_titulo:$("h-titulo").value, p_detalle:$("h-desc").value, p_ubicacion:$("h-lugar").value,
       p_actividad:$("h-act").value, p_realizado:$("h-hecho").value, p_fotos:fotos});
     $("form-hal").reset();
     soltarVistas(S.halFotos); S.halFotos = []; fotosHal();
@@ -1146,6 +1148,7 @@ function renderReportes(){
   if (!$("r-mes").value) $("r-mes").value = hoy.slice(0,7);
   const mes = $("r-mes").value || hoy.slice(0,7), caja = $("r-cuerpo"); caja.replaceChildren();
   opcionesInforme(mes);
+  cargarEspacio();
 
   // Alertas: lo que venció sin que el técnico lo realizara (no dependen del mes elegido).
   const alertas = [];
@@ -1281,6 +1284,34 @@ function opcionesInforme(mes){
   sel.value = [...sel.options].some(o => o.value === antes) ? antes : "mes";
 }
 
+/* ---------- espacio de la base de datos ---------- */
+// Se consulta como máximo cada 2 minutos (o al registrar un informe descargado).
+function mbTxt(b){ return (b / 1048576).toLocaleString("es-CL", {maximumFractionDigits: b < 10485760 ? 1 : 0}) + " MB"; }
+async function cargarEspacio(forzar){
+  if (!S.admin) return;
+  if (!forzar && S.espacioHora && Date.now() - S.espacioHora < 120000){ pintarEspacio(); return; }
+  S.espacioHora = Date.now();
+  try { S.espacio = await rpc("ot_espacio", {p_token:S.token}); } catch (e){ S.espacio = {error:e.message}; }
+  pintarEspacio();
+}
+function pintarEspacio(){
+  const caja = $("espacio"), d = S.espacio;
+  if (!caja || !d) return;
+  if (d.error){ caja.replaceChildren(h("p", {class:"nota"}, "No se pudo consultar el espacio: " + d.error)); return; }
+  const p = Math.min(100, Math.round(100 * d.usado / d.limite)), nivel = p >= 85 ? "alto" : p >= 65 ? "medio" : "bajo";
+  caja.replaceChildren(
+    h("div", {class:"espacio-cab"}, h("b", null, "Espacio de la base de datos"), h("span", {class:"espacio-pct " + nivel}, p + " %")),
+    h("div", {class:"espacio-barra", role:"progressbar", "aria-valuemin":"0", "aria-valuemax":"100", "aria-valuenow":String(p), "aria-label":"Espacio usado"},
+      h("span", {class:nivel, style:"width:" + Math.max(p, 1) + "%"})),
+    h("p", {class:"nota"}, mbTxt(d.usado) + " usados de " + mbTxt(d.limite) + " del plan gratuito. Fotos guardadas: " + d.fotos +
+      " (" + mbTxt(d.bytes_fotos) + ")" + (d.borradas ? "; " + d.borradas + " trabajos antiguos ya liberaron sus fotos." : ".")),
+    h("p", {class:"nota"}, "Las fotos de los trabajos cerrados hace más de " + d.semanas + " semanas se eliminan solas, solo si ya están en un informe que abriste o descargaste. El texto de los trabajos se guarda siempre." +
+      (d.ultimo_informe ? " Último informe registrado: " + fecha(d.ultimo_informe) + "." : " Aún no hay informes registrados.")),
+    d.sin_respaldo ? h("p", {class:"devol"}, d.sin_respaldo + (d.sin_respaldo === 1 ? " trabajo cerrado" : " trabajos cerrados") + " hace más de " + d.semanas +
+      " semanas aún " + (d.sin_respaldo === 1 ? "tiene" : "tienen") + " fotos que no están en ningún informe descargado (desde el " + fechaCorta(d.sin_respaldo_desde) +
+      "). Genera y descarga el informe semanal de esas semanas para que se liberen.") : null);
+}
+
 /* ---------- informe semanal o mensual con fotos ---------- */
 function esc(t){ return String(t == null ? "" : t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 function aDataUrl(blob){ return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(blob); }); }
@@ -1320,7 +1351,7 @@ async function generarInforme(){
     const estadoTxt = o => hecha(o) ? (o.estado === "cerrada" ? "Cerrada" : "Realizada, por revisar") : o.estado === "ejecucion" ? "En ejecución" : (o.tipo === "incidencia" ? "Abierta" : "No realizada");
     const fotosInforme = (o, de) => {
       const ns = fotosGuardadas(o);
-      if (!ns.length) return '<p class="sin">Sin foto.</p>';
+      if (!ns.length) return '<p class="sin">' + (o.fotos_borradas ? "Fotos eliminadas el " + esc(fechaCorta(isoLocal(o.fotos_borradas))) + " para liberar espacio; están en un informe anterior." : "Sin foto.") + "</p>";
       return ns.map((n, i) => fotos[o.id + "|" + n] ? '<img src="' + fotos[o.id + "|" + n] + '" alt="Foto ' + (i+1) + " " + de + " " + esc(numero(o)) + '">'
         : '<p class="sin">La foto ' + (i+1) + " no se pudo cargar.</p>").join("");
     };
@@ -1369,8 +1400,17 @@ async function generarInforme(){
     urlInforme = URL.createObjectURL(new Blob([doc], {type:"text/html"}));
     const sinFoto = conFoto.filter(([o, n]) => !fotos[o.id + "|" + n]).length;
     est.textContent = "Informe listo: " + trabajos.length + " trabajos, " + hals.length + " autohallazgos, " + (conFoto.length - sinFoto) + " fotos." + (sinFoto ? " " + sinFoto + " fotos no se pudieron cargar." : "");
-    enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener"}, "Abrir informe"),
-      h("a", {class:"btn", href:urlInforme, download:(semanal ? "Informe_semana_" + semanaIso(desde) + "_" + desde : "Informe_mensual_" + mes) + ".html"}, "Descargar archivo"));
+    // Al abrir o descargar un informe completo queda anotado: así las fotos antiguas de ese período se pueden liberar.
+    let registrado = false;
+    const registrar = () => {
+      if (registrado || sinFoto) return;
+      registrado = true;
+      rpc("ot_informe_registrar", {p_token:S.token, p_desde:desde, p_hasta:hasta, p_fotos:conFoto.length})
+        .then(() => cargarEspacio(true)).catch(() => { registrado = false; });
+    };
+    if (sinFoto) est.textContent += " Como faltan fotos, este informe no cuenta como respaldo: vuelve a generarlo.";
+    enl.append(h("a", {class:"btn wa", href:urlInforme, target:"_blank", rel:"noopener", onclick:registrar}, "Abrir informe"),
+      h("a", {class:"btn", onclick:registrar, href:urlInforme, download:(semanal ? "Informe_semana_" + semanaIso(desde) + "_" + desde : "Informe_mensual_" + mes) + ".html"}, "Descargar archivo"));
   } catch (e){ est.textContent = "No se pudo armar el informe. " + (e && e.message ? e.message : ""); }
   btn.disabled = false;
 }

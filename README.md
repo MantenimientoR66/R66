@@ -110,6 +110,8 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 
 ## Notas
 
+- El **Panel** muestra el **espacio de la base de datos**: cuánto se usa de los 500 MB del plan gratuito (en porcentaje y con una barra) y cuántas fotos hay guardadas.
+- **Limpieza de fotos:** cada vez que el administrador abre o descarga un informe (semanal o mensual) con todas sus fotos, queda anotado. Las fotos de los trabajos **cerrados hace más de 4 semanas** se eliminan solas, pero **solo si ese trabajo está en un informe descargado**. El texto del trabajo queda siempre. Si hay trabajos antiguos cuyas semanas no tienen informe, el Panel lo avisa.
 - Las fotos se guardan reducidas dentro de la base de datos. El plan gratuito de Supabase alcanza para unas 1.500 fotos en total (cada trabajo puede llevar hasta 5); después hay que eliminar OT antiguas o pasar a un plan pagado. El flujómetro sigue llevando una sola foto.
 - La página se actualiza sola cada 30 segundos. No envía avisos por correo ni al teléfono.
 - Nunca pongas en `config.js` la clave `secret` o `service_role` de Supabase: solo la `publishable`.

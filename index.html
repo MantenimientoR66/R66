@@ -105,6 +105,13 @@ button.btn:disabled{opacity:.55;cursor:default}
 .foto-item figcaption{font-size:.85rem;color:var(--tenue)}
 .foto-item .acciones{gap:6px}
 .foto-item .btn{padding:6px 10px;font-size:.9rem;cursor:pointer}
+.espacio{border:1px solid var(--linea);border-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;max-width:720px}
+.espacio-cab{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.espacio-pct{font:700 1.3rem var(--display);font-variant-numeric:tabular-nums}
+.espacio-pct.medio{color:var(--aviso)}.espacio-pct.alto{color:var(--alerta)}
+.espacio-barra{height:12px;border-radius:6px;background:var(--campo);overflow:hidden;border:1px solid var(--linea)}
+.espacio-barra span{display:block;height:100%;background:var(--ok)}
+.espacio-barra span.medio{background:var(--aviso)}.espacio-barra span.alto{background:var(--alerta)}
 .archivo-oculto{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none}
 .foto{max-width:100%;max-height:420px;border-radius:4px;border:1px solid var(--linea);display:block}
 .devol{border-left:4px solid var(--alerta);padding:6px 10px;background:var(--campo)}
@@ -362,6 +369,7 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 
     <section class="panel" id="reportes" hidden>
       <h2>Panel de mantenimiento</h2>
+      <div class="espacio" id="espacio" aria-live="polite"></div>
       <div class="fila" style="align-items:end">
         <label for="r-mes">Mes
           <input id="r-mes" type="month">
