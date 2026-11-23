@@ -62,6 +62,7 @@ alter table public.ordenes add column if not exists origen text not null default
 alter table public.ordenes add column if not exists aceptada timestamptz; -- momento en que el técnico aceptó la orden y la puso en ejecución
 alter table public.ordenes add column if not exists foto2 text; -- segunda foto del cierre (opcional)
 alter table public.ordenes add column if not exists metros_cubicos numeric; -- lectura informada en las OT de Flujómetro
+alter table public.ordenes add column if not exists nota_reasignacion text; -- historial de cambios de técnico hechos por el administrador
 -- Estados: asignada -> ejecucion (el técnico la acepta) -> revision (envió su reporte) -> cerrada; devuelta = el administrador pidió corregir.
 alter table public.ordenes drop constraint if exists ordenes_estado_check;
 alter table public.ordenes add constraint ordenes_estado_check check (estado in ('asignada','ejecucion','revision','devuelta','cerrada'));
@@ -893,7 +894,7 @@ begin
       'fecha_limite', o.fecha_limite, 'estado', o.estado, 'creada', o.creada, 'aceptada', o.aceptada, 'orden_cola', o.orden_cola, 'medidor', o.medidor,
       'codigo_actividad', o.codigo_actividad, 'metros_cubicos', o.metros_cubicos, 'descripcion_realizada', o.descripcion_realizada,
       'tiene_foto', o.foto is not null, 'tiene_foto2', o.foto2 is not null, 'enviado', o.enviado,
-      'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada)
+      'nota_devolucion', o.nota_devolucion, 'nota_cierre', o.nota_cierre, 'cerrada', o.cerrada, 'nota_reasignacion', o.nota_reasignacion)
     order by o.creada desc), '[]'::jsonb)
     into ords
     from public.ordenes o join public.usuarios t on t.id = o.trabajador_id
@@ -1120,21 +1121,34 @@ begin
   delete from public.ordenes where id = p_ot;
 end $$;
 
--- El administrador pasa una OT que nadie ha aceptado a otro técnico. Entra al final de la cola del nuevo técnico.
+-- El administrador pasa una orden a otro técnico.
+-- OT: solo mientras nadie la acepta; entra al final de la cola del nuevo técnico.
+-- Incidencia: mientras no esté cerrada (abierta, en ejecución o reabierta); vuelve a quedar abierta para que el nuevo técnico la acepte.
 create or replace function public.ot_reasignar(p_token text, p_ot uuid, p_trabajador uuid) returns void
 language plpgsql security definer set search_path = public, extensions as $$
-declare o public.ordenes;
+declare o public.ordenes; antes text; despues text;
 begin
   perform public.ot_admin(p_token);
-  perform 1 from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo for update;
+  select nombre into despues from public.usuarios where id = p_trabajador and rol = 'trabajador' and activo for update;
   if not found then raise exception 'Elige un técnico activo.'; end if;
   select * into o from public.ordenes where id = p_ot for update;
-  if not found or o.tipo <> 'ot' then raise exception 'Solo se pueden mover órdenes de trabajo.'; end if;
+  if not found or o.tipo not in ('ot','incidencia') then raise exception 'Solo se pueden mover órdenes de trabajo e incidencias.'; end if;
+  if o.trabajador_id = p_trabajador then raise exception 'Ya está asignada a ese técnico.'; end if;
+  select nombre into antes from public.usuarios where id = o.trabajador_id;
+  if o.tipo = 'incidencia' then
+    if o.estado not in ('asignada','ejecucion','devuelta') then raise exception 'Solo se puede reasignar una incidencia que no esté cerrada.'; end if;
+    update public.ordenes set trabajador_id = p_trabajador, estado = 'asignada', aceptada = null, orden_cola = null,
+      nota_reasignacion = concat_ws(E'\n', nota_reasignacion, 'Reasignada de ' || antes || ' a ' || despues || ' el '
+        || to_char(now() at time zone 'America/Santiago', 'DD-MM-YYYY HH24:MI') || '.')
+     where id = p_ot;
+    return;
+  end if;
   if o.estado <> 'asignada' then raise exception 'Solo se puede mover una OT que el técnico aún no acepta.'; end if;
-  if o.trabajador_id = p_trabajador then raise exception 'La OT ya está asignada a ese técnico.'; end if;
   update public.ordenes set trabajador_id = p_trabajador,
     orden_cola = (select coalesce(max(orden_cola), 0) + 1 from public.ordenes
-                   where trabajador_id = p_trabajador and tipo = 'ot' and estado = 'asignada')
+                   where trabajador_id = p_trabajador and tipo = 'ot' and estado = 'asignada'),
+    nota_reasignacion = concat_ws(E'\n', nota_reasignacion, 'Movida de ' || antes || ' a ' || despues || ' el '
+        || to_char(now() at time zone 'America/Santiago', 'DD-MM-YYYY HH24:MI') || '.')
    where id = p_ot;
 end $$;
 

@@ -58,6 +58,7 @@ Ninguna cuenta trae contraseña. El administrador crea la suya la primera vez qu
 - Una incidencia no lleva código de actividad: solo la descripción de lo que pasa y, si se quiere, la ubicación.
 - Cada incidencia tiene 24 horas de plazo desde que se informa. A las 12 horas sin cerrar aparece en rojo para el centro de control y el administrador, y como alerta en Reportes.
 - El técnico de turno la acepta (queda En ejecución) y luego la cierra describiendo cómo se resolvió (hasta dos fotos, opcionales). El centro de control y el administrador ven ese cierre.
+- El administrador puede **reasignar** una incidencia a otro técnico mientras no esté cerrada (abierta, en ejecución o reabierta), desde la misma incidencia. Vuelve a quedar abierta para que el nuevo técnico la acepte, el anterior deja de verla y el plazo de 24 horas sigue contando desde que se informó. Queda anotado quién la tenía y cuándo se cambió. Después hay que avisar al nuevo técnico con el botón de WhatsApp.
 
 ## Ronda de luminarias
 
