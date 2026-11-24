@@ -100,19 +100,10 @@ button.btn:disabled{opacity:.55;cursor:default}
 .cod{font-weight:600;font-variant-numeric:tabular-nums}
 .fotos{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start}
 .fotos .foto{max-width:min(100%,420px)}
-.foto-item{margin:0;display:flex;flex-direction:column;gap:6px;max-width:min(100%,260px)}
-.foto-item .foto{max-height:220px}
-.foto-item figcaption{font-size:.85rem;color:var(--tenue)}
-.foto-item .acciones{gap:6px}
-.foto-item .btn{padding:6px 10px;font-size:.9rem;cursor:pointer}
-.espacio{border:1px solid var(--linea);border-radius:4px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;max-width:720px}
-.espacio-cab{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.espacio-pct{font:700 1.3rem var(--display);font-variant-numeric:tabular-nums}
-.espacio-pct.medio{color:var(--aviso)}.espacio-pct.alto{color:var(--alerta)}
-.espacio-barra{height:12px;border-radius:6px;background:var(--campo);overflow:hidden;border:1px solid var(--linea)}
-.espacio-barra span{display:block;height:100%;background:var(--ok)}
-.espacio-barra span.medio{background:var(--aviso)}.espacio-barra span.alto{background:var(--alerta)}
-.archivo-oculto{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;pointer-events:none}
+.fotos-casillas{display:flex;flex-direction:column;gap:12px}
+.foto-casilla{display:flex;flex-direction:column;gap:8px;border:1px dashed var(--linea);border-radius:4px;padding:10px;max-width:440px}
+.foto-casilla .foto{max-height:240px;align-self:flex-start}
+.foto-casilla .btn{align-self:flex-start}
 .foto{max-width:100%;max-height:420px;border-radius:4px;border:1px solid var(--linea);display:block}
 .devol{border-left:4px solid var(--alerta);padding:6px 10px;background:var(--campo)}
 .equipo-fila{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}
@@ -127,7 +118,7 @@ button.btn.chico{padding:6px 12px;font-size:.9rem}
 .trab-cab{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:space-between;align-items:baseline}
 .trab-cab b{overflow-wrap:anywhere}
 .usr{font-variant-numeric:tabular-nums;color:var(--tenue)}
-a.btn,label.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
+a.btn{display:inline-block;text-decoration:none;font:600 1rem var(--cuerpo);border-radius:4px;padding:10px 16px;border:1px solid var(--tinta);color:var(--tinta)}
 a.btn.wa{background:var(--boton);border-color:var(--boton);color:var(--boton-tinta)}
 .nav{display:flex;flex-wrap:wrap;gap:6px;border-bottom:2px solid var(--linea);padding-bottom:8px}
 .nav button{font:600 1rem var(--cuerpo);color:var(--tenue);background:none;border:0;border-radius:4px;padding:8px 14px;cursor:pointer}
@@ -595,9 +586,9 @@ table.plan .num-cel{white-space:nowrap;text-align:right;font-variant-numeric:tab
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.97.0"></script>
 <div id="tip" role="tooltip" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="config.js?v=23"></script>
-<script src="calendario.js?v=23"></script>
-<script src="app.js?v=23"></script>
-<script src="bitacoras.js?v=23"></script>
+<script src="config.js?v=24"></script>
+<script src="calendario.js?v=24"></script>
+<script src="app.js?v=24"></script>
+<script src="bitacoras.js?v=24"></script>
 </body>
 </html>
