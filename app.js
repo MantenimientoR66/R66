@@ -319,6 +319,7 @@ setInterval(() => {            // el paso del tiempo cambia las alertas aunque n
 
 /* ---------- render ---------- */
 function render(){
+  if (eligiendoFoto()){ S.renderPendiente = true; return; }
   const act = document.activeElement, actId = act && act.id;
   let sel = null;
   try { if (actId && act.selectionStart != null) sel = [act.selectionStart, act.selectionEnd]; } catch(e){}
@@ -410,48 +411,58 @@ function galeria(o){
 // El técnico puede agregar hasta 'max', reemplazar cualquiera o quitarla y elegir otra antes de enviar.
 function listaFotos(o){ return o ? fotosGuardadas(o).map(n => ({n})) : []; }
 function soltarVistas(lista){ for (const it of lista || []) if (it.vista) URL.revokeObjectURL(it.vista); }
+function conFotos(lista){ return lista.filter(it => it.file || it.n); }
+// Mientras el técnico tiene abierta la cámara o la galería, la página no se redibuja (si no, el campo de foto se pierde).
+function eligiendoFoto(){ return S.eligiendoFoto && Date.now() - S.eligiendoFoto < 180000; }
+function terminarEleccion(){ if (!S.eligiendoFoto) return; S.eligiendoFoto = 0; if (S.renderPendiente){ S.renderPendiente = false; render(); } }
+window.addEventListener("focus", () => setTimeout(() => { if (eligiendoFoto() && Date.now() - S.eligiendoFoto > 1500) terminarEleccion(); }, 1200));
+// Una casilla de foto siempre a la vista (la obligatoria) y el botón "Agregar más fotos" suma casillas hasta 'max'.
+// Cada casilla se puede cambiar o quitar antes de enviar.
 function editorFotos(clave, lista, o, opts, refrescar){
   const max = opts.max || MAX_FOTOS, bloqueado = !!opts.ocupado;
-  const caja = h("div", {class:"bloque fotos-editor"},
-    h("span", {class:"rot"}, opts.titulo || "Fotos"),
-    h("p", {class:"nota"}, max === 1 ? "Una foto. Puedes reemplazarla o quitarla y elegir otra."
-      : "Hasta " + max + " fotos" + (opts.obligatoria ? "; al menos 1 es obligatoria" : ", todas opcionales") + ". Puedes reemplazar o quitar cualquiera antes de enviar."));
-  const grilla = h("div", {class:"fotos"});
+  if (!lista.length) lista.push({});
+  const caja = h("div", {class:"bloque fotos-editor"}, h("span", {class:"rot"}, opts.titulo || "Fotos"));
+  const casillas = h("div", {class:"fotos-casillas"});
   lista.forEach((it, i) => {
-    const vista = it.vista ? h("img", {class:"foto", alt:"Foto " + (i+1) + " elegida", src:it.vista}) : imagen(o, it.n);
-    const inp = h("input", {type:"file", accept:"image/*", id:clave + "-r" + i, class:"archivo-oculto", disabled:bloqueado,
+    const tiene = !!(it.file || it.n);
+    const vista = it.vista ? h("img", {class:"foto", alt:"Foto " + (i+1) + " elegida", src:it.vista}) : it.n ? imagen(o, it.n) : null;
+    const inp = h("input", {type:"file", accept:"image/*", id:clave + "-f" + i, disabled:bloqueado,
+      onclick: () => { S.eligiendoFoto = Date.now(); },
+      oncancel: () => terminarEleccion(),
       onchange: ev => {
         const f = ev.target.files && ev.target.files[0];
-        if (!f) return;
-        if (it.vista) URL.revokeObjectURL(it.vista);
-        lista[i] = {file:f, vista:URL.createObjectURL(f)}; refrescar();
-      }});
-    grilla.append(h("figure", {class:"foto-item"}, vista,
-      h("figcaption", null, "Foto " + (i+1) + (it.file ? " · nueva" : "")),
-      h("div", {class:"acciones"},
-        h("label", {class:"btn", for:inp.id}, "Reemplazar", inp),
-        h("button", {class:"btn peligro", type:"button", id:clave + "-q" + i, disabled:bloqueado,
-          onclick: () => { if (it.vista) URL.revokeObjectURL(it.vista); lista.splice(i, 1); refrescar(); }}, "Quitar"))));
-  });
-  if (lista.length) caja.append(grilla);
-  if (lista.length < max){
-    const inp = h("input", {type:"file", accept:"image/*", id:clave + "-add", multiple: max > 1, disabled:bloqueado,
-      onchange: ev => {
-        for (const f of Array.from(ev.target.files || [])){
-          if (lista.length >= max) break;
-          lista.push({file:f, vista:URL.createObjectURL(f)});
+        S.eligiendoFoto = 0; S.renderPendiente = false;
+        if (f){
+          if (it.vista) URL.revokeObjectURL(it.vista);
+          lista[i] = {file:f, vista:URL.createObjectURL(f)};
         }
         refrescar();
       }});
-    caja.append(h("label", {for:inp.id}, lista.length ? "Agregar otra foto (" + lista.length + " de " + max + ")"
-      : (opts.obligatoria ? "Agregar foto" : "Agregar foto (opcional)"), inp));
-  } else if (max > 1) caja.append(h("p", {class:"nota"}, "Llegaste al máximo de " + max + " fotos. Quita una para agregar otra."));
+    const nombre = "Foto " + (i+1) + (i === 0 && opts.obligatoria ? " (obligatoria)" : " (opcional)");
+    casillas.append(h("div", {class:"foto-casilla"},
+      h("label", {for:inp.id}, nombre),
+      vista,
+      tiene ? h("span", {class:"nota"}, it.file ? "Foto lista. Para cambiarla, elige otra:" : "Foto guardada. Para cambiarla, elige otra:") : null,
+      inp,
+      (i > 0 || tiene) ? h("button", {class:"btn peligro", type:"button", id:clave + "-q" + i, disabled:bloqueado,
+        onclick: () => {
+          if (it.vista) URL.revokeObjectURL(it.vista);
+          if (i === 0 && lista.length === 1) lista[0] = {}; else lista.splice(i, 1);
+          refrescar();
+        }}, tiene ? "Quitar foto" : "Quitar casilla") : null));
+  });
+  caja.append(casillas);
+  if (lista.length < max)
+    caja.append(h("div", {class:"acciones"},
+      h("button", {class:"btn", type:"button", id:clave + "-mas", disabled:bloqueado, onclick: () => { lista.push({}); refrescar(); }}, "Agregar más fotos"),
+      h("span", {class:"nota"}, lista.length + " de " + max + " fotos")));
+  else if (max > 1) caja.append(h("p", {class:"nota"}, "Llegaste al máximo de " + max + " fotos."));
   return caja;
 }
 // Prepara la lista para la base de datos: fotos nuevas reducidas a JPG y {n} para las que se conservan.
 async function fotosParaEnviar(lista){
   const r = [];
-  for (const it of lista){
+  for (const it of conFotos(lista)){
     if (!it.file){ r.push({n:it.n}); continue; }
     try { r.push(await prepararFoto(it.file)); }
     catch (e){ throw new Error("No se pudo procesar la foto " + (r.length + 1) + ". Prueba con otra imagen en JPG o PNG."); }
@@ -471,7 +482,7 @@ function corregirFotos(o){
     h("div", {class:"acciones"},
       h("button", {class:"btn principal", type:"button", id:"cfg-"+id, disabled:ocupado,
         onclick: async () => {
-          if (!lista.length){ S.errores[id] = "Debe quedar al menos una foto."; render(); return; }
+          if (!conFotos(lista).length){ S.errores[id] = "Debe quedar al menos una foto."; render(); return; }
           S.ocupado[id] = true; delete S.errores[id]; render();
           try {
             await rpc("ot_fotos_guardar", {p_token:S.token, p_ot:id, p_fotos: await fotosParaEnviar(lista)});
@@ -810,7 +821,7 @@ async function enviarReporte(o){
   if (!b || S.ocupado[id]) return;
   if (inc && !b.descripcion.trim()){ S.errores[id] = "Describe cómo se resolvió la incidencia."; render(); return; }
   if (!inc && (!b.codigo.trim() || !b.descripcion.trim())){ S.errores[id] = "Completa el código de actividad y la descripción."; render(); return; }
-  if (!inc && !b.fotos.length){ S.errores[id] = "Agrega al menos una foto del trabajo antes de enviar."; render(); return; }
+  if (!inc && !conFotos(b.fotos).length){ S.errores[id] = "Agrega al menos una foto del trabajo antes de enviar."; render(); return; }
   S.ocupado[id] = true; delete S.errores[id]; render();
   try {
     const fotos = await fotosParaEnviar(b.fotos);
@@ -834,7 +845,7 @@ fotosHal();
 $("form-hal").addEventListener("submit", async ev => {
   ev.preventDefault();
   const est = $("h-estado"), btn = $("h-enviar");
-  if (!S.halFotos.length){ est.textContent = "Agrega al menos una foto del hallazgo."; return; }
+  if (!conFotos(S.halFotos).length){ est.textContent = "Agrega al menos una foto del hallazgo."; return; }
   btn.disabled = true; est.textContent = "Enviando…";
   try {
     const fotos = await fotosParaEnviar(S.halFotos);

@@ -5,7 +5,7 @@ Página para asignar órdenes de trabajo (OT) a los técnicos de terreno. Cada p
 - El administrador crea la OT y la asigna a un técnico.
 - El técnico ve solo sus OT y las acepta con el botón **Aceptar OT**: desde ese momento la OT queda **En ejecución**.
 - Al terminar, escribe el código de actividad y la descripción del trabajo realizado, y sube sus fotos: hasta 5, con 1 obligatoria.
-- Antes de enviar puede **Reemplazar** o **Quitar** cualquier foto y elegir otra. Si ya envió el reporte y la OT aún no se cierra, puede usar **Corregir fotos** para cambiarlas.
+- Aparece una casilla de foto obligatoria y el botón **Agregar más fotos** para sumar casillas (hasta 5). Cada foto se puede cambiar eligiendo otra o borrar con **Quitar foto** antes de enviar. Si ya envió el reporte y la OT aún no se cierra, puede usar **Corregir fotos** para cambiarlas.
 - El administrador revisa el reporte y cierra la OT, o la devuelve con una nota.
 
 ## Buscador
